@@ -29,6 +29,8 @@
 #include "ui.h"
 #include "saves.h"
 #include "medal.h"
+#include "music.h"
+#include "core.h"
 #include "nes/nes.h"
 #include "palettes.h"
 
@@ -42,6 +44,7 @@ static const char *TAG = "NESTOR";
 #endif
 #define BACKLIGHT_PLAY  153          /* 60 %, as PELLETINO */
 #define BACKLIGHT_DEMO  76           /* 30 % */
+#define MUSIC_TRACK     5            /* DuckTales NSF: 5 = Moon Surface (The Moon), per the rip's m3u */
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
 typedef struct __attribute__((packed)) {
@@ -239,7 +242,7 @@ static void toast(const char *line1, const char *line2)
     ui_text_center(108, line1, UI_YELLOW);
     ui_text_center(124, line2, UI_WHITE);
     ui_present();
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    for (int i = 0; i < 60; i++) music_tick();   /* ~1 s, music keeps playing if any */
 }
 
 static void toast_mute(void) { toast(muted ? "Muted" : "Sound on", "hold BOOT 3 s to toggle"); }
@@ -261,6 +264,7 @@ static bool controller_screen(bool boot)
     ble_pad_state_t shown = -1;
     int64_t last_draw = 0;
     ui_palette_cube();
+    music_start(MUSIC_TRACK);
     pad_edges();
     for (;;) {
         ble_pad_state_t st = ble_pad_state();
@@ -306,7 +310,7 @@ static bool controller_screen(bool boot)
             ui_text_center(216, "BOOT 3s: mute   10s: forget pad", UI_GREY);
             ui_present();
         }
-        vTaskDelay(pdMS_TO_TICKS(16));
+        music_tick();
     }
 }
 
@@ -332,6 +336,7 @@ static int picker(int sel)
     int64_t last_input = esp_timer_get_time();
     ui_palette_cube();
     display_set_backlight(BACKLIGHT_PLAY);
+    music_start(MUSIC_TRACK);
     pad_edges();
     for (;;) {
         uint32_t e = pad_edges(), mev = medal_events();
@@ -370,7 +375,7 @@ static int picker(int sel)
             ui_text_center(228, "A play  B demo on/off  MENU pad", UI_GREY);
             ui_present();
         }
-        vTaskDelay(pdMS_TO_TICKS(16));
+        music_tick();
     }
 }
 
@@ -457,11 +462,20 @@ static void sram_flush(nes_t *nes, const char *rom, bool force)
 
 typedef enum { GAME_PICKER, GAME_IDLE, GAME_DEMO_NEXT, GAME_DEMO_EXIT } game_result_t;
 
+static game_result_t run_game_inner(int idx, bool demo);
+
 /* demo: no input, DEMO_SECONDS limit unless locked, saves untouched */
 static game_result_t run_game(int idx, bool demo)
 {
+    game_result_t r = run_game_inner(idx, demo);
+    core_unload();   /* hand the core back to the menu music */
+    return r;
+}
+
+static game_result_t run_game_inner(int idx, bool demo)
+{
     const char *rom = roms[idx].name;
-    static nes_t *nes;
+    music_stop();
     ui_palette_cube();
     if (demo) {
         char name[29]; short_name(rom, name, sizeof name);
@@ -473,12 +487,8 @@ static game_result_t run_game(int idx, bool demo)
         ui_present();
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
-    if (nes) nes_shutdown();
-    nes = nes_init(SYS_NES_NTSC, AUDIO_SAMPLE_RATE, false, NULL);
-    assert(nes);
-    int rc = nes_insertcart(rom_loadmem((uint8 *)roms_base + roms[idx].off, roms[idx].size));
-    if (rc < 0) {
-        ESP_LOGE(TAG, "nes_insertcart failed: %d", rc);
+    nes_t *nes = nes_getptr();
+    if (!core_load(roms_base + roms[idx].off, roms[idx].size)) {
         ui_clear(UI_BLACK); ui_text_center(112, "Unsupported ROM", UI_RED); ui_present();
         vTaskDelay(pdMS_TO_TICKS(1500));
         return demo ? GAME_DEMO_NEXT : GAME_PICKER;
@@ -523,7 +533,7 @@ static game_result_t run_game(int idx, bool demo)
             if (a == MENU_LOAD) saves_load_state(rom);
             if (a == MENU_RESET) nes_reset(true);
             if (a == MENU_MUTE) set_mute(!muted);
-            if (a == MENU_CONTROLLER) { controller_screen(false); build_palette(4); }
+            if (a == MENU_CONTROLLER) { controller_screen(false); build_palette(4); }   /* music_start is a no-op: core busy */
             if (a == MENU_PICKER) return GAME_PICKER;
             prev = pad_now();
             last_input = esp_timer_get_time();
