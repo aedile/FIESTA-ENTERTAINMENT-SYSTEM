@@ -371,6 +371,10 @@ static void read_device_services(esp_hidh_dev_t *dev)
             ESP_LOGE(TAG, "malloc protocol_mode failed");
             return;
         }
+        /* NESTOR: HID over GATT defaults to Report Protocol mode. Devices without a
+         * Protocol Mode characteristic (Xbox pads) otherwise leave this uninitialised
+         * and every input notification is dropped as 'wrong protocol mode'. */
+        memset(dev->protocol_mode, ESP_HID_PROTOCOL_MODE_REPORT, dev->config.report_maps_len);
 
         /* read characteristic value may fail, so we should init report maps */
         memset(dev->config.report_maps, 0, dev->config.report_maps_len * sizeof(esp_hid_raw_report_map_t));
@@ -631,9 +635,7 @@ on_write(uint16_t conn_handle,
 
     assert(conn_id == conn_handle);
 
-    MODLOG_DFLT(DEBUG, "write complete; status=%d conn_handle=%d "
-                "attr_handle=%d\n",
-                error->status, conn_handle, attr->handle);
+    ESP_LOGI(TAG, "write complete; status=%d attr_handle=%d", error->status, attr->handle);
     SEND_CB();
 
     return 0;
@@ -652,6 +654,7 @@ static void attach_report_listeners(esp_hidh_dev_t *dev)
     uint16_t ccc_data = 1;
     esp_hidh_dev_report_t *report = dev->reports;
 
+    ESP_LOGI(TAG, "attaching listeners, battery handle %u ccc %u", dev->ble.battery_handle, dev->ble.battery_ccc_handle);
     //subscribe to battery notifications
     if (dev->ble.battery_handle) {
         register_for_notify(dev->ble.conn_id, dev->ble.battery_handle);
@@ -663,15 +666,20 @@ static void attach_report_listeners(esp_hidh_dev_t *dev)
 
     while (report) {
         /* subscribe to notifications */
+        ESP_LOGI(TAG, "report id %u type %u mode %u perms 0x%x handle %u ccc %u", report->report_id, report->report_type,
+                 report->protocol_mode, report->permissions, report->handle, report->ccc_handle);
         if ((report->permissions & BLE_GATT_CHR_PROP_NOTIFY) != 0 && report->protocol_mode == ESP_HID_PROTOCOL_MODE_REPORT) {
             register_for_notify(dev->ble.conn_id, report->handle);
+            ESP_LOGI(TAG, "  notify registered");
             if (report->ccc_handle) {
                 /* Write CCC descr to enable notifications */
                 write_char_descr(dev->ble.conn_id, report->ccc_handle, 2, (uint8_t *)&ccc_data);
+                ESP_LOGI(TAG, "  ccc written");
             }
         }
         report = report->next;
     }
+    ESP_LOGI(TAG, "listeners attached");
 }
 
 static int
@@ -747,6 +755,7 @@ esp_hidh_gattc_event_handler(struct ble_gap_event *event, void *arg)
         return 0;
 
     case BLE_GAP_EVENT_NOTIFY_RX:
+        ESP_LOGI(TAG, "notify handle %u len %u", event->notify_rx.attr_handle, OS_MBUF_PKTLEN(event->notify_rx.om));
         /* Peer sent us a notification or indication. */
         MODLOG_DFLT(DEBUG, "received %s; conn_handle=%d attr_handle=%d "
                     "attr_len=%d\n",
@@ -1012,6 +1021,7 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
     }
 
     attach_report_listeners(dev);
+    dev->connected = true;   /* NESTOR: upstream never sets this, so a disconnect never raised CLOSE_EVENT */
     return dev;
 }
 #endif // CONFIG_BT_NIMBLE_HID_SERVICE
