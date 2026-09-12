@@ -532,9 +532,8 @@ static game_result_t run_game_inner(int idx, bool demo)
     music_stop();
     ui_palette_cube();
     if (demo) {
-        /* title card: cover, confetti, flags and a 2.5 s sting of the Moon theme */
+        /* title card: cover, confetti, flags; silent, a one-second music sting between games felt odd */
         char name[29]; short_name(rom, name, sizeof name);
-        music_start(MUSIC_TRACK);
         for (int frame = 0; frame < 150; frame++) {
             ui_clear(UI_BLACK);
             festive_confetti(frame);
@@ -545,10 +544,9 @@ static game_result_t run_game_inner(int idx, bool demo)
             ui_text_center(196, demo_lock == idx ? "demo (locked)" : "demo", UI_GREY);
             const char *warn = battery_warning();
             ui_text_center(216, warn && (frame & 32) ? warn : "press any pad button to play", warn && (frame & 32) ? UI_RED : UI_GREY);
-            music_tick_hook((frame & 1) ? NULL : ui_line_push);
-            if (pad_edges()) { music_stop(); return GAME_DEMO_EXIT; }
+            music_tick_hook((frame & 1) ? NULL : ui_line_push);   /* no music loaded: just paces and pushes */
+            if (pad_edges()) return GAME_DEMO_EXIT;
         }
-        music_stop();
     }
     nes_t *nes = nes_getptr();
     if (!core_load(roms_base + roms[idx].off, roms[idx].size)) {
@@ -639,7 +637,7 @@ static bool cycle_card(void)
 {
     char games[32]; snprintf(games, sizeof games, "%d GAMES ON BOARD", nroms);
     music_start(MUSIC_TRACK);
-    for (int frame = 0; frame < 300; frame++) {
+    for (int frame = 0; frame < 60 * 18; frame++) {
         ui_clear(UI_BLACK);
         festive_confetti(frame);
         festive_papel_picado(frame);
