@@ -29,6 +29,12 @@ void ui_init(void)
 
 void ui_clear(uint8_t colour) { memset(ui_fb, colour, FB_PITCH * FB_LINES); }
 
+void ui_fill(int x, int y, int w, int h, uint8_t colour)
+{
+    for (int r = y; r < y + h && r < FB_LINES; r++)
+        memset(ui_fb + r * FB_PITCH + FB_XOFF + x, colour, w);
+}
+
 void ui_text(int x, int y, const char *s, uint8_t colour)
 {
     for (; *s; s++, x += 8) {

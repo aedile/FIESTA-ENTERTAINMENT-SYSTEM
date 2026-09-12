@@ -116,20 +116,13 @@ static bool memory_zone_dirty(const void *ptr, size_t size)
 }
 
 
-int state_save(const char* fn)
+/* NESTOR: takes an open stream (fmemopen on a RAM buffer here) instead of a filename;
+   the caller owns and closes it. */
+int state_save(FILE *file)
 {
    uint32 numberOfBlocks = 0;
    uint8 buffer[600];
    nes_t *machine = nes_getptr();
-   FILE *file;
-
-   if (!(file = fopen(fn, "wb")))
-   {
-       MESSAGE_ERROR("state_save: file '%s' could not be opened.\n", fn);
-       return -1; //goto _error;
-   }
-
-   MESSAGE_INFO("state_save: file '%s' opened.\n", fn);
 
    _fwrite("SNSS\x00\x00\x00\x05", 8);
 
@@ -277,7 +270,6 @@ int state_save(const char* fn)
    numberOfBlocks = swap32(numberOfBlocks);
    _fwrite(&numberOfBlocks, 4);
 
-   fclose(file);
 
    MESSAGE_INFO("state_save: Game saved!\n");
 
@@ -285,36 +277,28 @@ int state_save(const char* fn)
 
 _error:
    MESSAGE_ERROR("state_save: Save failed!\n");
-   fclose(file);
    return -1;
 }
 
 
-int state_load(const char* fn)
+int state_load(FILE *file)
 {
    uint8 buffer[600];
 
    nes_t *machine = nes_getptr();
-   FILE *file;
-
-   if (!(file = fopen(fn, "rb")))
-   {
-       MESSAGE_ERROR("state_load: file '%s' could not be opened.\n", fn);
-       return -1; //goto _error;
-  }
 
    _fread(buffer, 8);
 
    if (memcmp(buffer, "SNSS", 4) != 0)
    {
-      MESSAGE_ERROR("state_load: file '%s' is not a save file.\n", fn);
+      MESSAGE_ERROR("state_load: not a save file.\n");
       goto _error;
    }
 
    uint32 numberOfBlocks = swap32(*((uint32*)&buffer[4]));
    uint32 nextBlock = 8;
 
-   MESSAGE_INFO("state_load: file '%s' opened, blocks=%u.\n", fn, numberOfBlocks);
+   MESSAGE_INFO("state_load: blocks=%u.\n", numberOfBlocks);
 
    for (uint32 blk = 0; blk < numberOfBlocks; blk++)
    {
@@ -472,7 +456,6 @@ int state_load(const char* fn)
    }
 
    /* close file, we're done */
-   fclose(file);
 
    MESSAGE_INFO("state_load: Game restored\n");
 
@@ -480,6 +463,5 @@ int state_load(const char* fn)
 
 _error:
    MESSAGE_ERROR("state_load: Load failed!\n");
-   fclose(file);
    return -1;
 }
