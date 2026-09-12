@@ -224,15 +224,17 @@ static bool cold_open(void)
     }
     /* ENTERTAINMENT (520 px at 5x) rides the band across three cuts, parking a different part
      * under each cover: ENTER / Mario, TAIN / Zelda, MENT / Contra. SYSTEM punches in under Samus. */
-    static const struct { const char *game; int from; uint8_t colour; } cuts[4] = {
-        { "Super Mario Bros.", 0, CUBE(5,0,0) },
-        { "Legend of Zelda, The", 1, CUBE(1,5,1) },
-        { "Contra", 2, CUBE(1,2,4) },
-        { "Metroid", 0, CUBE(5,3,0) },
+    static const struct { const char *game, *word; int from; uint8_t colour; } cuts[6] = {
+        { "Super Mario Bros.", "ENTERTAINMENT", 0, CUBE(5,0,0) },
+        { "Legend of Zelda, The", "ENTERTAINMENT", 1, CUBE(1,5,1) },
+        { "Contra", "ENTERTAINMENT", 2, CUBE(1,2,4) },
+        { "Metroid", "SYSTEM", 0, CUBE(5,3,0) },
+        { "Castlevania", "FIESTA", 1, CUBE(5,1,3) },
+        { "Mike Tyson's Punch-Out!!", "2027", 2, CUBE(5,5,0) },
     };
-    for (int c = 0; c < 4; c++)
+    for (int c = 0; c < 6; c++)
         for (int t = 0; t < CUT_FRAMES; t++) {
-            const char *word = c < 3 ? "ENTERTAINMENT" : "SYSTEM";
+            const char *word = cuts[c].word;
             int wx;
             int tt = t < FLASH_FRAMES ? 0 : t - FLASH_FRAMES;
             if (c < 3) {
@@ -242,8 +244,9 @@ static bool cold_open(void)
                 int crawl = (tt - 20) / 3;
                 wx = target[c] + (tt < 20 ? (start - target[c]) * (20 - tt) / 20 : -crawl);
             } else {
-                /* SYSTEM scrolls too: in from the right, parks, then the same slow crawl */
-                int target = 8, start = R + 8, crawl = (tt - 20) / 3;
+                /* the other words scroll in from the right, park centred, then the same slow crawl */
+                int target = CX - 40 * (int)strlen(word) / 2, start = R + 8, crawl = (tt - 20) / 3;
+                if (target < 8) target = 8;
                 wx = target + (tt < 20 ? (start - target) * (20 - tt) / 20 : -crawl);
             }
             cut(t, cuts[c].game, cuts[c].from, cuts[c].colour, word, wx);
