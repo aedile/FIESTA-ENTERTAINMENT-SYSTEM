@@ -8,19 +8,20 @@
 #define DISPLAY_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Display dimensions. The panel is 240x280 portrait; we run it rotated (MADCTL)
-// so the full NES 256x240 frame fits at native pixels with 12 px bars each side.
-#define DISPLAY_WIDTH   280
+// The panel is 240x280. Two orientations, chosen at runtime (display_set_orientation):
+//   landscape: rotated via MADCTL, the full NES 256x240 frame at native pixels, 12 px bars each side
+//   portrait:  the NES frame cropped 8 px each side to 240x240, 20 px black bars top and bottom
+#define DISPLAY_WIDTH   280   /* landscape numbers; portrait is 240x280 */
 #define DISPLAY_HEIGHT  240
 
-#define GAME_WIDTH      256
+#define GAME_WIDTH_MAX  256
 #define GAME_HEIGHT     240
-#define GAME_X_OFFSET   ((DISPLAY_WIDTH - GAME_WIDTH) / 2)
 #define STRIP_ROWS      16
 
 // GPIO Pin definitions (FIESTA26)
@@ -55,7 +56,15 @@ void display_write(const uint16_t *data, uint32_t len);
 void display_write_preswapped(const uint16_t *data, uint32_t len);
 
 /**
- * Push an 8-bit palette-indexed frame: GAME_HEIGHT rows of GAME_WIDTH pixels
+ * Choose the orientation (see top of file). Safe to call any time after display_init;
+ * clears the panel. display_game_width() is then 256 (landscape) or 240 (portrait):
+ * callers hand display_push_* rows of that many pixels, i.e. skip 8 px on the left in portrait.
+ */
+void display_set_orientation(bool portrait);
+int display_game_width(void);
+
+/**
+ * Push an 8-bit palette-indexed frame: GAME_HEIGHT rows of display_game_width() pixels
  * starting at fb, consecutive rows pitch bytes apart. pal is 256 RGB565 entries
  * already byte-swapped for the panel. Converted in STRIP_ROWS strips into one DMA
  * buffer while the other strip is in flight; returns after the last strip is queued.

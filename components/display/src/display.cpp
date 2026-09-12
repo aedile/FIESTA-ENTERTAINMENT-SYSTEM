@@ -20,7 +20,9 @@ static int current_buffer = 0;
 static spi_transaction_t trans[2]; // Transaction descriptors
 static bool trans_pending = false;
 uint32_t display_wait_us = 0;   // time spent waiting for a queued strip DMA to finish
-static constexpr size_t DMA_BUFFER_SIZE = GAME_WIDTH * STRIP_ROWS * 2;
+static constexpr size_t DMA_BUFFER_SIZE = GAME_WIDTH_MAX * STRIP_ROWS * 2;
+static int game_w = 256, game_x = 12, game_y = 0;   // where the game rectangle sits; set by display_set_orientation
+static bool is_portrait = false;
 
 // ST7789 Commands
 #define ST7789_NOP 0x00
@@ -69,16 +71,17 @@ static void send_data_dma(const uint8_t *data, size_t len) {
   spi_device_transmit(spi_handle, &t); // Blocking DMA transfer
 }
 
-// ST7789 240x280 panels use the middle 280 of a 320-long axis. Rotated to
-// landscape that axis is the column axis, so the offset moves to X.
-#define ST7789_X_OFFSET 20
+// ST7789 240x280 panels use the middle 280 of a 320-long axis: rows in portrait,
+// columns once rotated to landscape.
+#define ST7789_OFFSET 20
 
 void display_set_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
   uint8_t data[4];
 
-  // Column address set (with the 280-of-320 offset)
-  uint16_t x_adj = x + ST7789_X_OFFSET;
-  uint16_t x_end = x + w - 1 + ST7789_X_OFFSET;
+  uint16_t x_adj = x + (is_portrait ? 0 : ST7789_OFFSET);
+  uint16_t x_end = x + w - 1 + (is_portrait ? 0 : ST7789_OFFSET);
+  uint16_t y_adj = y + (is_portrait ? ST7789_OFFSET : 0);
+  uint16_t y_end = y + h - 1 + (is_portrait ? ST7789_OFFSET : 0);
   send_cmd(ST7789_CASET);
   data[0] = (x_adj >> 8) & 0xFF;
   data[1] = x_adj & 0xFF;
@@ -86,12 +89,11 @@ void display_set_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
   data[3] = x_end & 0xFF;
   send_data(data, 4);
 
-  // Row address set
   send_cmd(ST7789_RASET);
-  data[0] = (y >> 8) & 0xFF;
-  data[1] = y & 0xFF;
-  data[2] = ((y + h - 1) >> 8) & 0xFF;
-  data[3] = (y + h - 1) & 0xFF;
+  data[0] = (y_adj >> 8) & 0xFF;
+  data[1] = y_adj & 0xFF;
+  data[2] = (y_end >> 8) & 0xFF;
+  data[3] = y_end & 0xFF;
   send_data(data, 4);
 
   // Memory write
@@ -99,7 +101,7 @@ void display_set_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 }
 
 void display_init(void) {
-  ESP_LOGI(TAG, "Initializing ST7789 display (280x240 landscape)");
+  ESP_LOGI(TAG, "Initializing ST7789 display (240x280 panel)");
 
   // Configure GPIO pins
   gpio_config_t io_conf = {};
@@ -156,9 +158,9 @@ void display_init(void) {
   uint8_t colmod = 0x55; // 16-bit
   send_data(&colmod, 1);
 
-  // Memory access control (rotation/mirroring)
+  // Memory access control (rotation): set by display_set_orientation below
   send_cmd(ST7789_MADCTL);
-  uint8_t madctl = 0x60; // MX|MV: landscape. Use 0xA0 (MY|MV) to flip 180 degrees.
+  uint8_t madctl = 0x60;
   send_data(&madctl, 1);
 
   // Inversion on (ST7789 typically needs this)
@@ -247,15 +249,16 @@ void display_write_preswapped(const uint16_t *data, uint32_t len) {
 IRAM_ATTR void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal) {
   if (y0 == 0) {
     display_wait_done();   // commands are polling transfers: the queue must be empty
-    display_set_window(GAME_X_OFFSET, 0, GAME_WIDTH, GAME_HEIGHT);
+    display_set_window(game_x, game_y, game_w, GAME_HEIGHT);
   }
   // Convert into the free buffer while the other strip is on the wire.
   // Two pixels per 32-bit store, eight per iteration; src is read as 32-bit words
   // (the framebuffer rows are 4-byte aligned: pitch 272, x offset 8).
   uint32_t *dst = (uint32_t *)dma_buffer[current_buffer];
+  const int words = game_w / 4;
   for (int r = 0; r < STRIP_ROWS; r++) {
     const uint32_t *src = (const uint32_t *)(rows + r * pitch);
-    for (int x = 0; x < GAME_WIDTH / 4; x += 2) {
+    for (int x = 0; x < words; x += 2) {
       uint32_t a = src[x], b = src[x + 1];
       dst[0] = pal[a & 0xFF] | (uint32_t)pal[(a >> 8) & 0xFF] << 16;
       dst[1] = pal[(a >> 16) & 0xFF] | (uint32_t)pal[a >> 24] << 16;
@@ -271,7 +274,7 @@ IRAM_ATTR void display_push_strip(const uint8_t *rows, int pitch, int y0, const 
     display_wait_us += esp_timer_get_time() - w0;
     trans_pending = false;
   }
-  trans[current_buffer].length = DMA_BUFFER_SIZE * 8;
+  trans[current_buffer].length = game_w * STRIP_ROWS * 2 * 8;
   trans[current_buffer].rxlength = 0;
   trans[current_buffer].tx_buffer = dma_buffer[current_buffer];
   trans[current_buffer].rx_buffer = nullptr;
@@ -294,11 +297,25 @@ void display_wait_done(void) {
   }
 }
 
+void display_set_orientation(bool portrait) {
+  display_wait_done();
+  is_portrait = portrait;
+  send_cmd(ST7789_MADCTL);
+  uint8_t madctl = portrait ? 0x00 : 0x60;   // 0x60 = MX|MV landscape; 0xA0 (MY|MV) would flip it 180
+  send_data(&madctl, 1);
+  if (portrait) { game_w = 240; game_x = 0; game_y = (280 - GAME_HEIGHT) / 2; }
+  else          { game_w = 256; game_x = (280 - 256) / 2; game_y = 0; }
+  display_fill(0x0000);
+}
+
+int display_game_width(void) { return game_w; }
+
 void display_fill(uint16_t color) {
   // Byte-swap color
   uint16_t swapped = ((color >> 8) | (color << 8));
 
-  display_set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+  if (is_portrait) display_set_window(0, 0, 240, 280);
+  else display_set_window(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
   // Fill in chunks using buffer 0
   size_t chunk_pixels = DMA_BUFFER_SIZE / 2;
@@ -307,7 +324,7 @@ void display_fill(uint16_t color) {
     buf[i] = swapped;
   }
 
-  size_t total_pixels = DISPLAY_WIDTH * DISPLAY_HEIGHT;
+  size_t total_pixels = 240 * 280;
   while (total_pixels > 0) {
     size_t pixels = (total_pixels > chunk_pixels) ? chunk_pixels : total_pixels;
     send_data_dma(dma_buffer[0], pixels * 2);
