@@ -1,8 +1,14 @@
 idf_component_register(
-    SRCS "main.c" "ui.c" "saves.c" "medal.c"
+    SRCS "main.c" "ui.c" "saves.c" "medal.c" "music.c" "core.c"
     INCLUDE_DIRS "."
     REQUIRES display audio_hal ble_pad nofrendo driver esp_timer nvs_flash esp_partition esp_adc
 )
+
+# Menu music: ROMS/music/menu.nsf (tools/fetch_music.py) is embedded if present.
+if(EXISTS "${CMAKE_SOURCE_DIR}/ROMS/music/menu.nsf")
+    target_add_binary_data(${COMPONENT_LIB} "${CMAKE_SOURCE_DIR}/ROMS/music/menu.nsf" BINARY)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_MENU_NSF=1)
+endif()
 
 if(DEFINED DEMO_SECONDS)   # bench: idf.py -DDEMO_SECONDS=20 build
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DEMO_SECONDS=${DEMO_SECONDS})
