@@ -8,7 +8,7 @@
 #include "festive.h"
 
 #define SPLASH_FRAMES (60 * 20)
-#define FLASH_FRAMES 6
+#define FLASH_FRAMES 15
 #define GROUND 204
 
 /* visible window in portrait is columns 8..247 of the 256-wide frame */
@@ -222,24 +222,25 @@ static bool cold_open(void)
         music_tick_hook((t & 1) ? NULL : ui_line_push);
         if (splash_skip_requested()) return false;
     }
-    /* ENTERTAINMENT (416 px at 4x) scrolls through the band across the Mario and Zelda cuts:
-     * ENTER shows under Mario, TAINMENT under Link. SYSTEM punches in under Samus. */
-    static const struct { const char *game; int from; uint8_t colour; } cuts[3] = {
+    /* ENTERTAINMENT (520 px at 5x) rides the band across three cuts, parking a different part
+     * under each cover: ENTER / Mario, TAIN / Zelda, MENT / Contra. SYSTEM punches in under Samus. */
+    static const struct { const char *game; int from; uint8_t colour; } cuts[4] = {
         { "Super Mario Bros.", 0, CUBE(5,0,0) },
         { "Legend of Zelda, The", 1, CUBE(1,5,1) },
-        { "Metroid", 2, CUBE(5,3,0) },
+        { "Contra", 2, CUBE(1,2,5) },
+        { "Metroid", 0, CUBE(5,3,0) },
     };
-    for (int c = 0; c < 3; c++)
+    for (int c = 0; c < 4; c++)
         for (int t = 0; t < CUT_FRAMES; t++) {
-            const char *word = c < 2 ? "ENTERTAINMENT" : "SYSTEM";
+            const char *word = c < 3 ? "ENTERTAINMENT" : "SYSTEM";
             int wx;
             int tt = t < FLASH_FRAMES ? 0 : t - FLASH_FRAMES;
-            if (c < 2) {
-                /* 5x letters are 40 px: ENTER (200 px) parks under Mario and crawls slowly;
-                 * TAINMENT (320 px) parks under Zelda and crawls faster so MENT arrives by the end */
-                static const int target[2] = { 28, 28 - 5 * 40 }, start[2] = { R + 8, 28 - 30 };
-                int crawl = c == 0 ? (tt - 20) / 2 : (tt - 20) * 3 / 2;
-                wx = target[c] + (tt < 20 ? (start[c] - target[c]) * (20 - tt) / 20 : -crawl);
+            if (c < 3) {
+                /* 40 px letters: park letter 0 / 5 / 9 at x=28, sliding in over 20 frames, then a slow crawl */
+                static const int target[3] = { 28, 28 - 5 * 40, 28 - 9 * 40 };
+                int start = c == 0 ? R + 8 : target[c] + 40;
+                int crawl = (tt - 20) / 3;
+                wx = target[c] + (tt < 20 ? (start - target[c]) * (20 - tt) / 20 : -crawl);
             } else {
                 int punch = tt < 10 ? (10 - tt) * 24 : 0;
                 wx = CX - 240 / 2 + punch;
