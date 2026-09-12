@@ -8,7 +8,7 @@
  * Without a controller the medal's two buttons work everywhere:
  *   PWR  short: next game            long (2 s): power off
  *   BOOT short: lock/unlock the demo to the current game (kept in NVS)
- *        long (3 s): forget the saved controller
+ *        hold 3 s: mute / unmute        hold 10 s: forget the saved controller
  * PRG/CHR ROM run straight out of memory-mapped flash; battery RAM and save
  * states live in the 'saves' NVS partition.
  */
@@ -92,6 +92,7 @@ static void log_heap(const char *when)
 #define NVS_NS "nestor"
 static int demo_lock = -1;        /* index of the game the demo is locked to, -1 = cycle */
 static bool demo_skip[64];
+static bool muted;
 
 static void nvs_key_for(char out[16], char type, const char *rom)
 {
@@ -110,6 +111,9 @@ static void demo_settings_load(void)
         nvs_key_for(k, 'd', roms[i].name);
         demo_skip[i] = nvs_get_u8(h, k, &v) == ESP_OK && v;
     }
+    uint8_t m = 0;
+    muted = nvs_get_u8(h, "mute", &m) == ESP_OK && m;
+    audio_set_mute(muted);
     nvs_close(h);
     ESP_LOGI(TAG, "demo lock: %s", demo_lock >= 0 ? roms[demo_lock].name : "none");
 }
@@ -131,6 +135,15 @@ static void demo_set_skip(int idx, bool skip)
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     if (skip) nvs_set_u8(h, k, 1); else nvs_erase_key(h, k);
     nvs_commit(h); nvs_close(h);
+}
+
+static void set_mute(bool m)
+{
+    muted = m;
+    audio_set_mute(m);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "mute", m); nvs_commit(h); nvs_close(h); }
+    ESP_LOGI(TAG, "%s", m ? "muted" : "sound on");
 }
 
 static int demo_next(int i)
@@ -197,12 +210,14 @@ static uint32_t pad_edges(void)
     return e;
 }
 
-/* medal buttons: real ones plus the serial stand-ins; BOOT long always forgets the pad */
+/* medal buttons: real ones plus the serial stand-ins. BOOT 10 s forgets the pad everywhere;
+ * BOOT 3 s toggles mute everywhere (the toast is drawn by the caller through toast_mute()). */
 static uint32_t medal_events(void)
 {
     uint32_t ev = medal_poll() | serial_medal;
     serial_medal = 0;
-    if (ev & BTN_BOOT_LONG) { ble_pad_forget(); ble_pad_scan_any(true); }
+    if (ev & BTN_BOOT_HOLD10) { ble_pad_forget(); ble_pad_scan_any(true); }
+    if (ev & BTN_BOOT_HOLD3) set_mute(!muted);
     return ev;
 }
 
@@ -218,6 +233,8 @@ static void toast(const char *line1, const char *line2)
     ui_present();
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
+
+static void toast_mute(void) { toast(muted ? "Muted" : "Sound on", "hold BOOT 3 s to toggle"); }
 
 static void toggle_lock(int idx)
 {
@@ -243,7 +260,8 @@ static bool controller_screen(bool boot)
         if (!any && !connected && esp_timer_get_time() > deadline) { any = true; ble_pad_scan_any(true); }
         if (connected && any) { any = false; ble_pad_scan_any(false); }   /* reconnects go to this pad only */
         uint32_t mev = medal_events();
-        if (mev & BTN_BOOT_LONG) { any = true; shown = -1; }
+        if (mev & BTN_BOOT_HOLD10) { any = true; shown = -1; }
+        if (mev & BTN_BOOT_HOLD3) { toast_mute(); shown = -1; }
         if (mev & BTN_PWR_SHORT) return false;
 
         uint32_t e = pad_edges();
@@ -277,7 +295,7 @@ static bool controller_screen(bool boot)
                 ui_text(40, 136, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(56, 136, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
             }
             ui_text_center(200, "PWR: demo now   hold: power off", UI_GREY);
-            ui_text_center(216, "hold BOOT: forget controller", UI_GREY);
+            ui_text_center(216, "BOOT 3s: mute   10s: forget pad", UI_GREY);
             ui_present();
         }
         vTaskDelay(pdMS_TO_TICKS(16));
@@ -315,6 +333,7 @@ static int picker(int sel)
         if (e & PAD_A) return sel;
         if (e & PAD_B) { demo_set_skip(sel, !demo_skip[sel]); dirty = true; }
         if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); dirty = true; }
+        if (mev & BTN_BOOT_HOLD3) { toast_mute(); dirty = true; }
         if (serial_demo) { serial_demo = false; return -1; }
         if (esp_timer_get_time() - last_input > IDLE_AFTER_US) return -1;
         if (e & PAD_MENU) { if (!controller_screen(false)) return -1; ui_palette_cube(); dirty = true; }
@@ -335,7 +354,8 @@ static int picker(int sel)
             char tags[40] = "";
             if (has_save[sel]) strcat(tags, "* saved  ");
             if (demo_skip[sel]) strcat(tags, "no demo  ");
-            if (sel == demo_lock) strcat(tags, "demo locked");
+            if (sel == demo_lock) strcat(tags, "demo locked  ");
+            if (muted) strcat(tags, "muted");
             ui_text_center(184, tags, has_save[sel] ? UI_GREEN : UI_GREY);
             char pos[24]; snprintf(pos, sizeof pos, "%d/%d", sel + 1, nroms);
             ui_text_center(200, pos, UI_GREY);
@@ -347,10 +367,11 @@ static int picker(int sel)
 }
 
 /* ---- in-game menu ---- */
-enum { MENU_RESUME, MENU_SAVE, MENU_LOAD, MENU_PICKER, MENU_CONTROLLER, MENU_COUNT };
+enum { MENU_RESUME, MENU_SAVE, MENU_LOAD, MENU_RESET, MENU_MUTE, MENU_PICKER, MENU_CONTROLLER, MENU_COUNT };
 static int game_menu(const char *rom)
 {
-    static const char *items[MENU_COUNT] = { "Resume", "Save state", "Load state", "Return to picker", "Controller" };
+    const char *items[MENU_COUNT] = { "Resume", "Save state", "Load state", "Reset game", muted ? "Unmute" : "Mute",
+                                      "Return to picker", "Controller" };
     bool have_state = saves_has_state(rom);
     int sel = 0;
     bool dirty = true;
@@ -363,14 +384,14 @@ static int game_menu(const char *rom)
         if ((e & PAD_A) && !(sel == MENU_LOAD && !have_state)) return sel;
         if (dirty) {
             dirty = false;
-            ui_fill(56, 56, 144, 120, UI_BLACK);
-            ui_frame(56, 56, 144, 120, UI_WHITE);
-            ui_text(72, 68, "MENU", UI_YELLOW);
+            ui_fill(56, 44, 144, 150, UI_BLACK);
+            ui_frame(56, 44, 144, 150, UI_WHITE);
+            ui_text(72, 56, "MENU", UI_YELLOW);
             for (int i = 0; i < MENU_COUNT; i++) {
                 uint8_t c = i == sel ? UI_YELLOW : UI_WHITE;
                 if (i == MENU_LOAD && !have_state) c = UI_GREY;
-                ui_text(72, 92 + i * 14, i == sel ? ">" : " ", UI_YELLOW);
-                ui_text(88, 92 + i * 14, items[i], c);
+                ui_text(72, 78 + i * 14, i == sel ? ">" : " ", UI_YELLOW);
+                ui_text(88, 78 + i * 14, items[i], c);
             }
             ui_present();
         }
@@ -476,6 +497,7 @@ static game_result_t run_game(int idx, bool demo)
         int64_t f0 = esp_timer_get_time();
         uint32_t b = 0, mev = medal_events();
         if (mev & BTN_BOOT_SHORT) { toggle_lock(idx); build_palette(4); underruns0 = audio_get_underrun_count(); }
+        if (mev & BTN_BOOT_HOLD3) { toast_mute(); build_palette(4); underruns0 = audio_get_underrun_count(); }
         if (demo) {
             if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the picker"); return GAME_DEMO_EXIT; }
             if (mev & BTN_PWR_SHORT) return GAME_DEMO_NEXT;
@@ -491,6 +513,8 @@ static game_result_t run_game(int idx, bool demo)
             int a = game_menu(rom);
             if (a == MENU_SAVE) saves_save_state(rom);
             if (a == MENU_LOAD) saves_load_state(rom);
+            if (a == MENU_RESET) nes_reset(true);
+            if (a == MENU_MUTE) set_mute(!muted);
             if (a == MENU_CONTROLLER) { controller_screen(false); build_palette(4); }
             if (a == MENU_PICKER) return GAME_PICKER;
             prev = pad_now();

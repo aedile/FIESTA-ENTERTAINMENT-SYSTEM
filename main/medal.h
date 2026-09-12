@@ -3,10 +3,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define BTN_BOOT_SHORT 0x1
-#define BTN_BOOT_LONG  0x2   /* 3 s */
-#define BTN_PWR_SHORT  0x4
-#define BTN_PWR_LONG   0x8   /* 2 s: medal_poll() powers off by itself */
+#define BTN_BOOT_SHORT 0x01
+#define BTN_BOOT_HOLD3 0x02  /* held 3-10 s, reported on release (mute) */
+#define BTN_BOOT_HOLD10 0x04 /* held 10 s, reported while still down (forget controller) */
+#define BTN_PWR_SHORT  0x08
+#define BTN_PWR_LONG   0x10  /* 2 s: medal_poll() powers off by itself */
 
 void medal_init(void);          /* holds the battery rail up, configures the buttons and ADC */
 uint32_t medal_poll(void);      /* BTN_* events since the last call */

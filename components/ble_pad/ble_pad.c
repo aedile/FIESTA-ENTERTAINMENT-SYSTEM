@@ -99,13 +99,14 @@ static uint32_t get_bits(const uint8_t *d, size_t len, int bit, int size)
 }
 
 /* Default map is the Xbox / 8BitDo (X-input BLE) button numbering:
- * 1 A, 2 B, 4 X, 5 Y, 7 LB, 8 RB, 11 View/Select, 12 Menu/Start. */
+ * 1 A, 2 B, 4 X, 5 Y, 7 LB, 8 RB, 11 View/Select, 12 Menu/Start.
+ * Positions, not labels: the NES has A on the right and B below, which is Xbox B and A. */
 #define BTN(n) (1u << ((n) - 1))
 static uint32_t map_buttons(uint32_t raw)
 {
     uint32_t b = 0;
-    if (raw & BTN(1)) b |= PAD_A;
-    if (raw & BTN(2)) b |= PAD_B;
+    if (raw & BTN(2)) b |= PAD_A;
+    if (raw & BTN(1)) b |= PAD_B;
     if (raw & BTN(12)) b |= PAD_START;
     if (raw & BTN(11)) b |= PAD_SELECT;
     if (raw & (BTN(5) | BTN(7) | BTN(8))) b |= PAD_MENU;
