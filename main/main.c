@@ -2,8 +2,8 @@
  * NESTOR - NES emulator for the Waveshare ESP32-C6-LCD-1.69
  *
  * Boot -> controller screen (until a pad connects) -> ROM picker -> game.
- * No pad within 30 s -> demo mode: every ROM for 5 minutes, played by a
- * simple input bot, until someone presses a pad button.
+ * No pad within 30 s -> demo mode: every ROM in turn, running its own attract
+ * mode (DEMO_BOT=1 adds an input bot), until someone presses a pad button.
  * MENU (Y / shoulder) in a game: resume, save/load state, back to picker, controller screen.
  * PRG/CHR ROM are executed straight out of memory-mapped flash; battery RAM and
  * save states live in the 'saves' NVS partition.
@@ -35,8 +35,9 @@ static const char *TAG = "NESTOR";
 #define SRAM_SIZE    0x2000
 #define DEMO_AFTER_US   30000000LL   /* no controller for this long -> demo mode */
 #ifndef DEMO_SECONDS
-#define DEMO_SECONDS    300          /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=20) */
+#define DEMO_SECONDS    30           /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=300) */
 #endif
+#define DEMO_BOT        0            /* 1: demo_bot() feeds input; 0: games run their own attract modes */
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
 typedef struct __attribute__((packed)) { char name[48]; uint32_t off, size; } rom_entry_t;
@@ -385,7 +386,7 @@ static bool run_game(int idx, bool demo)
         if (demo) {
             if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the picker"); return true; }
             if (f0 - t_start > (int64_t)DEMO_SECONDS * 1000000) return false;
-            b = demo_bot(f0 - t_start);
+            b = DEMO_BOT ? demo_bot(f0 - t_start) : 0;
         } else {
             b = pad_now();
         }
