@@ -57,3 +57,30 @@ void ui_present(void)
     display_push_indexed(ui_fb + FB_XOFF, FB_PITCH, ui_pal);
     display_wait_done();
 }
+
+void ui_palette_cube(void)
+{
+    for (int i = 0; i < 180; i++)
+        ui_pal[i] = ui_rgb((i / 30) * 51, ((i / 5) % 6) * 51, (i % 5) * 63);
+}
+
+void ui_bitmap(int x, int y, const uint8_t *px, int w, int h, int num, int den)
+{
+    int ow = w * num / den, oh = h * num / den;
+    for (int oy = 0; oy < oh; oy++) {
+        int sy = y + oy;
+        if (sy < 0 || sy >= FB_LINES) continue;
+        const uint8_t *row = px + (oy * den / num) * w;
+        uint8_t *dst = ui_fb + sy * FB_PITCH + FB_XOFF;
+        for (int ox = 0; ox < ow; ox++) {
+            int sx = x + ox;
+            if (sx >= 0 && sx < 256) dst[sx] = row[ox * den / num];
+        }
+    }
+}
+
+void ui_frame(int x, int y, int w, int h, uint8_t colour)
+{
+    ui_fill(x, y, w, 1, colour); ui_fill(x, y + h - 1, w, 1, colour);
+    ui_fill(x, y, 1, h, colour); ui_fill(x + w - 1, y, 1, h, colour);
+}
