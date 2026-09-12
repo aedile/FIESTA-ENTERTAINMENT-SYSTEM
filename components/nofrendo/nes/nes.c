@@ -30,6 +30,11 @@ nes_t *nes_getptr(void)
     return &nes;
 }
 
+/* NESTOR profiling: CPU cycles spent per subsystem, read and cleared by the port */
+#include "esp_cpu.h"
+uint32_t nes_prof_cpu, nes_prof_ppu, nes_prof_apu;
+#define PROF(acc, stmt) do { uint32_t _c0 = esp_cpu_get_cycle_count(); stmt; acc += esp_cpu_get_cycle_count() - _c0; } while (0)
+
 /* run emulation for one frame */
 void nes_emulate(bool draw)
 {
@@ -38,16 +43,17 @@ void nes_emulate(bool draw)
     while (nes.scanline < nes.scanlines_per_frame)
     {
         // Running a little bit ahead seems to fix both Battletoads games...
-        int elapsed_cycles = nes6502_execute(86 - 12);
+        int elapsed_cycles;
+        PROF(nes_prof_cpu, elapsed_cycles = nes6502_execute(86 - 12));
 
-        ppu_renderline(nes.vidbuf, nes.scanline, draw);
+        PROF(nes_prof_ppu, ppu_renderline(nes.vidbuf, nes.scanline, draw));
 
         if (draw && nes.strip_func && (nes.scanline & 15) == 15 && nes.scanline < NES_SCREEN_HEIGHT)
             nes.strip_func(nes.vidbuf, nes.scanline - 15, 16);
 
         if (nes.scanline == 241)
         {
-            elapsed_cycles += nes6502_execute(6);
+            PROF(nes_prof_cpu, elapsed_cycles += nes6502_execute(6));
             if (nes.ppu->ctrl0 & PPU_CTRL0F_NMI)
                 nes6502_nmi();
 
@@ -59,14 +65,14 @@ void nes_emulate(bool draw)
         {
             // Mappers use various techniques to detect horizontal blank and we can't accommodate
             // all of them unfortunately. But ~86 cycles seems to work fine for everything tested.
-            elapsed_cycles += nes6502_execute(86 - elapsed_cycles);
+            PROF(nes_prof_cpu, elapsed_cycles += nes6502_execute(86 - elapsed_cycles));
             nes.mapper->hblank(&nes);
         }
 
         nes.cycles += nes.cycles_per_scanline;
 
-        elapsed_cycles += nes6502_execute(nes.cycles - elapsed_cycles);
-        apu_fc_advance(elapsed_cycles);
+        PROF(nes_prof_cpu, elapsed_cycles += nes6502_execute(nes.cycles - elapsed_cycles));
+        PROF(nes_prof_apu, apu_fc_advance(elapsed_cycles));
         nes.cycles -= elapsed_cycles;
 
         ppu_endline();
@@ -78,7 +84,7 @@ void nes_emulate(bool draw)
     if (draw && nes.blit_func)
         nes.blit_func(nes.vidbuf);
 
-    apu_emulate();
+    PROF(nes_prof_apu, apu_emulate());
 }
 
 uint8 *nes_setvidbuf(uint8 *vidbuf)

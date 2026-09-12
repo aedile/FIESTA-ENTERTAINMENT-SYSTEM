@@ -123,4 +123,5 @@ int nes_insertcart(rom_t *cart);
 int nes_loadfile(const char *filename);
 void nes_settimer(nes_timer_t *func, int period);
 void nes_emulate(bool draw);
+extern uint32_t nes_prof_cpu, nes_prof_ppu, nes_prof_apu;   /* NESTOR: CPU cycles per subsystem, port clears them */
 void nes_reset(bool hard_reset);

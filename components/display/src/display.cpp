@@ -7,6 +7,7 @@
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstring>
@@ -18,6 +19,7 @@ static uint8_t *dma_buffer[2] = {nullptr, nullptr}; // Double buffer
 static int current_buffer = 0;
 static spi_transaction_t trans[2]; // Transaction descriptors
 static bool trans_pending = false;
+uint32_t display_wait_us = 0;   // time spent waiting for a queued strip DMA to finish
 static constexpr size_t DMA_BUFFER_SIZE = GAME_WIDTH * STRIP_ROWS * 2;
 
 // ST7789 Commands
@@ -242,26 +244,31 @@ void display_write_preswapped(const uint16_t *data, uint32_t len) {
   current_buffer = 1 - current_buffer;
 }
 
-void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal) {
+IRAM_ATTR void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal) {
   if (y0 == 0) {
     display_wait_done();   // commands are polling transfers: the queue must be empty
     display_set_window(GAME_X_OFFSET, 0, GAME_WIDTH, GAME_HEIGHT);
   }
   // Convert into the free buffer while the other strip is on the wire.
-  uint16_t *dst = (uint16_t *)dma_buffer[current_buffer];
+  // Two pixels per 32-bit store, eight per iteration; src is read as 32-bit words
+  // (the framebuffer rows are 4-byte aligned: pitch 272, x offset 8).
+  uint32_t *dst = (uint32_t *)dma_buffer[current_buffer];
   for (int r = 0; r < STRIP_ROWS; r++) {
-    const uint8_t *src = rows + r * pitch;
-    for (int x = 0; x < GAME_WIDTH; x += 4) {
-      dst[x] = pal[src[x]];
-      dst[x + 1] = pal[src[x + 1]];
-      dst[x + 2] = pal[src[x + 2]];
-      dst[x + 3] = pal[src[x + 3]];
+    const uint32_t *src = (const uint32_t *)(rows + r * pitch);
+    for (int x = 0; x < GAME_WIDTH / 4; x += 2) {
+      uint32_t a = src[x], b = src[x + 1];
+      dst[0] = pal[a & 0xFF] | (uint32_t)pal[(a >> 8) & 0xFF] << 16;
+      dst[1] = pal[(a >> 16) & 0xFF] | (uint32_t)pal[a >> 24] << 16;
+      dst[2] = pal[b & 0xFF] | (uint32_t)pal[(b >> 8) & 0xFF] << 16;
+      dst[3] = pal[(b >> 16) & 0xFF] | (uint32_t)pal[b >> 24] << 16;
+      dst += 4;
     }
-    dst += GAME_WIDTH;
   }
   if (trans_pending) {
     spi_transaction_t *rtrans;
+    int64_t w0 = esp_timer_get_time();
     spi_device_get_trans_result(spi_handle, &rtrans, portMAX_DELAY);
+    display_wait_us += esp_timer_get_time() - w0;
     trans_pending = false;
   }
   trans[current_buffer].length = DMA_BUFFER_SIZE * 8;

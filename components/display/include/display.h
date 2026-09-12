@@ -68,6 +68,7 @@ void display_push_indexed(const uint8_t *fb, int pitch, const uint16_t *pal);
  * queued for DMA, so the caller can go on rendering while it transfers.
  */
 void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal);
+extern uint32_t display_wait_us;   /* accumulated time blocked on strip DMA completion (profiling) */
 
 /**
  * Wait for pending DMA transfer to complete

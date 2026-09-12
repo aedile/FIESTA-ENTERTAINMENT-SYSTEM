@@ -76,7 +76,7 @@ static const int dmc_clocks[16] =
 static const int duty_flip[4] = { 2, 4, 8, 12 };
 
 
-void apu_fc_advance(int cycles)
+IRAM_ATTR void apu_fc_advance(int cycles)
 {
    // https://wiki.nesdev.com/w/index.php/APU_Frame_Counter
    const int int_period = 4 * 7457;
@@ -675,7 +675,7 @@ uint8 apu_read(uint32 address)
    return value;
 }
 
-void apu_process(short *buffer, size_t num_samples, bool stereo)
+IRAM_ATTR void apu_process(short *buffer, size_t num_samples, bool stereo)
 {
    int prev_sample = apu.prev_sample;
 
