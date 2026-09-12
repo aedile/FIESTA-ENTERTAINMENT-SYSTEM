@@ -97,7 +97,7 @@ static int demo_lock = -1;        /* index of the game the demo is locked to, -1
 static bool demo_skip[64];
 static bool muted;
 /* games left out of the demo cycle unless toggled back in with B in the picker (matched by short name) */
-static const char *const demo_skip_default[] = { "DuckTales", "Double Dragon", "Mega Man" };
+static const char *const demo_skip_default[] = { "DuckTales", "Double Dragon", "Mega Man", "Final Fantasy" };
 
 static void nvs_key_for(char out[16], char type, const char *rom)
 {
