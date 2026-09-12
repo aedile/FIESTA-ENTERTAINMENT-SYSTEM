@@ -92,7 +92,19 @@ static uint32_t serial_pad(void)
     return m;
 }
 
-static uint32_t pad_now(void) { return ble_pad_buttons() | serial_pad(); }
+static uint32_t pad_now(void)
+{
+    uint32_t b = ble_pad_buttons(), raw = ble_pad_raw();
+    static uint32_t last_b = 0, last_raw = 0;
+    if (b != last_b || raw != last_raw) {
+        ESP_LOGI(TAG, "PAD raw=%04lx %s%s%s%s%s%s%s%s%s", raw,
+                 b & PAD_UP ? "UP " : "", b & PAD_DOWN ? "DOWN " : "", b & PAD_LEFT ? "LEFT " : "",
+                 b & PAD_RIGHT ? "RIGHT " : "", b & PAD_A ? "A " : "", b & PAD_B ? "B " : "",
+                 b & PAD_START ? "START " : "", b & PAD_SELECT ? "SELECT " : "", b & PAD_MENU ? "MENU " : "");
+        last_b = b; last_raw = raw;
+    }
+    return b | serial_pad();
+}
 
 /* newly pressed bits, with key repeat on up/down for lists */
 static uint32_t pad_edges(void)

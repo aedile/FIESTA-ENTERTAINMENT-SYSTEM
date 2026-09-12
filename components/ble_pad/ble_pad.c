@@ -84,7 +84,7 @@ static void hid_parse(const uint8_t *d, size_t len)
     }
     ESP_LOGI(TAG, "report map: %d input fields", nfields);
     for (int f = 0; f < nfields; f++)
-        ESP_LOGD(TAG, "  rid %u page %x usage %x bit %u size %u [%ld..%ld]", fields[f].rid, fields[f].page,
+        ESP_LOGI(TAG, "  rid %u page %x usage %x bit %u size %u [%ld..%ld]", fields[f].rid, fields[f].page,
                  fields[f].usage, fields[f].bit, fields[f].size, (long)fields[f].lmin, (long)fields[f].lmax);
 }
 
