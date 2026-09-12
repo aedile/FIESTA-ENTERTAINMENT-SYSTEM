@@ -2,6 +2,8 @@
  * NESTOR - NES emulator for the Waveshare ESP32-C6-LCD-1.69
  *
  * Boot -> controller screen (until a pad connects) -> ROM picker -> game.
+ * No pad within 30 s -> demo mode: every ROM for 5 minutes, played by a
+ * simple input bot, until someone presses a pad button.
  * MENU (Y / shoulder) in a game: resume, save/load state, back to picker, controller screen.
  * PRG/CHR ROM are executed straight out of memory-mapped flash; battery RAM and
  * save states live in the 'saves' NVS partition.
@@ -12,6 +14,7 @@
 #include "esp_timer.h"
 #include "esp_partition.h"
 #include "esp_rom_crc.h"
+#include "esp_random.h"
 #include "driver/gpio.h"
 #include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
@@ -30,6 +33,10 @@ static const char *TAG = "NESTOR";
 #define PIN_BAT_EN   GPIO_NUM_15   /* the medal's battery rail: hold it up or we brown out */
 #define PIN_BTN_BOOT GPIO_NUM_9    /* active low */
 #define SRAM_SIZE    0x2000
+#define DEMO_AFTER_US   30000000LL   /* no controller for this long -> demo mode */
+#ifndef DEMO_SECONDS
+#define DEMO_SECONDS    300          /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=20) */
+#endif
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
 typedef struct __attribute__((packed)) { char name[48]; uint32_t off, size; } rom_entry_t;
@@ -74,6 +81,7 @@ static void log_heap(const char *when)
 /* ---- input: the BLE pad, plus keys typed into the serial monitor for bench testing
  * (w/a/s/d = d-pad, j = A, k = B, q = start, e = select, m = menu) ---- */
 static int64_t serial_last = -10000000;
+static bool serial_demo;
 static bool serial_active(void) { return esp_timer_get_time() - serial_last < 5000000; }   /* bench driving: screens accept keys as if a pad were connected */
 
 static uint32_t serial_pad(void)
@@ -86,6 +94,7 @@ static uint32_t serial_pad(void)
     while (usb_serial_jtag_read_bytes(&c, 1, 0) == 1) {
         const char *k = memchr(keys, c, sizeof keys - 1);
         if (k) { held_until[k - keys] = now + 120000; serial_last = now; }
+        if (c == 'x') serial_demo = true;   /* bench: jump straight into demo mode from the picker */
     }
     uint32_t m = 0;
     for (int i = 0; i < 9; i++) if (held_until[i] > now) m |= bits[i];
@@ -130,10 +139,11 @@ static bool boot_button_edge(void)
     return e;
 }
 
-/* ---- controller screen ---- */
-static void controller_screen(bool boot)
+/* ---- controller screen. Returns false if nothing connected for DEMO_AFTER_US. ---- */
+static bool controller_screen(bool boot)
 {
     int64_t deadline = esp_timer_get_time() + ((boot && ble_pad_has_saved()) ? 5000000 : 0);
+    int64_t demo_at = esp_timer_get_time() + DEMO_AFTER_US;
     bool any = false;
     int sel = 0;
     ble_pad_state_t shown = -1;
@@ -151,9 +161,10 @@ static void controller_screen(bool boot)
             if (e & PAD_UP) sel = 0;
             if (e & PAD_DOWN) sel = 1;
             if ((e & PAD_A) && sel == 1) { ble_pad_forget(); any = true; ble_pad_scan_any(true); sel = 0; }
-            if (((e & PAD_A) && sel == 0) || (e & (PAD_B | PAD_MENU))) return;
+            if (((e & PAD_A) && sel == 0) || (e & (PAD_B | PAD_MENU))) return true;
         }
-        if (boot && connected) return;
+        if (boot && connected) return true;
+        if (!connected && !serial_active() && esp_timer_get_time() > demo_at) return false;
 
         if (st != shown || esp_timer_get_time() - last_draw > 250000) {
             shown = st; last_draw = esp_timer_get_time();
@@ -174,6 +185,10 @@ static void controller_screen(bool boot)
             } else {
                 ui_text(40, 136, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(56, 136, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
                 ui_text(40, 152, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(56, 152, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
+            }
+            if (!connected) {
+                char d[32]; snprintf(d, sizeof d, "demo mode in %d s", (int)((demo_at - esp_timer_get_time()) / 1000000));
+                ui_text_center(176, d, UI_GREY);
             }
             ui_text_center(216, "BOOT button: forget saved", UI_GREY);
             ui_present();
@@ -196,8 +211,9 @@ static int picker(int sel)
         if ((e & PAD_UP) && sel > 0) { sel--; dirty = true; }
         if ((e & PAD_DOWN) && sel < nroms - 1) { sel++; dirty = true; }
         if (e & PAD_A) return sel;
+        if (serial_demo) { serial_demo = false; return -1; }
         if (e & PAD_MENU) { controller_screen(false); dirty = true; }
-        if (ble_pad_state() != PAD_CONNECTED && !serial_active()) { controller_screen(false); dirty = true; }
+        if (ble_pad_state() != PAD_CONNECTED && !serial_active()) { if (!controller_screen(false)) return -1; dirty = true; }
         if (dirty) {
             dirty = false;
             if (sel < top) top = sel;
@@ -288,6 +304,28 @@ static int nes_buttons(uint32_t b)
     return n;
 }
 
+/* ---- demo bot: gets past title screens, then wanders with a bias to the right and taps
+ * A/B. Not smart, but platformers run and jump, racers steer, menus advance. ---- */
+static uint32_t demo_bot(int64_t t_us)
+{
+    static int64_t next_change, a_until, b_until;
+    static uint32_t held;
+    uint32_t out = 0;
+    int64_t sec = t_us / 1000000;
+    if (sec < 20 && (t_us % 5000000) < 150000) out |= PAD_START;   /* tap Start at 0,5,10,15 s */
+    if (t_us > next_change) {
+        int r = esp_random() % 100;
+        held = r < 45 ? PAD_RIGHT : r < 60 ? PAD_LEFT : r < 70 ? PAD_UP : r < 80 ? PAD_DOWN : 0;
+        next_change = t_us + 300000 + esp_random() % 900000;
+    }
+    if (esp_random() % 100 < 2) a_until = t_us + 150000;
+    if (esp_random() % 100 < 1) b_until = t_us + 100000;
+    out |= held;
+    if (t_us < a_until) out |= PAD_A;
+    if (t_us < b_until) out |= PAD_B;
+    return out;
+}
+
 /* battery RAM: written to NVS when its CRC has changed and then stayed put for a second */
 static uint32_t sram_saved_crc, sram_last_crc;
 static void sram_flush(nes_t *nes, const char *rom, bool force)
@@ -301,10 +339,19 @@ static void sram_flush(nes_t *nes, const char *rom, bool force)
     sram_last_crc = crc;
 }
 
-static void run_game(int idx)
+/* demo: bot input, DEMO_SECONDS time limit, saves untouched; returns true if a pad button was pressed */
+static bool run_game(int idx, bool demo)
 {
     const char *rom = roms[idx].name;
     static nes_t *nes;
+    if (demo) {
+        char name[29]; short_name(rom, name, sizeof name);
+        ui_clear(UI_BLACK);
+        ui_text_center(100, name, UI_YELLOW);
+        ui_text_center(124, "demo - press any button to play", UI_GREY);
+        ui_present();
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
     if (nes) nes_shutdown();
     nes = nes_init(SYS_NES_NTSC, AUDIO_SAMPLE_RATE, false, NULL);
     assert(nes);
@@ -313,16 +360,16 @@ static void run_game(int idx)
         ESP_LOGE(TAG, "nes_insertcart failed: %d", rc);
         ui_clear(UI_BLACK); ui_text_center(112, "Unsupported ROM", UI_RED); ui_present();
         vTaskDelay(pdMS_TO_TICKS(1500));
-        return;
+        return false;
     }
     nes->strip_func = push_strip;
     nes_setvidbuf(ui_fb);
     build_palette(4);   /* palettes.h index 4 = PVM, retro-go default */
-    if (nes->cart->battery) {
+    if (nes->cart->battery && !demo) {
         if (saves_load_sram(rom, nes->cart->prg_ram, SRAM_SIZE)) ESP_LOGI(TAG, "battery RAM loaded");
         sram_saved_crc = sram_last_crc = esp_rom_crc32_le(0, nes->cart->prg_ram, SRAM_SIZE);
     }
-    ESP_LOGI(TAG, "running %s", rom);
+    ESP_LOGI(TAG, "running %s%s", rom, demo ? " (demo)" : "");
     log_heap("with cart loaded");
 
     int frames = 0, skipped = 0;
@@ -330,16 +377,25 @@ static void run_game(int idx)
     int64_t t_report = esp_timer_get_time(), emu_us = 0, wait_us = 0;
     uint32_t prev = 0, underruns0 = audio_get_underrun_count();
     nes_prof_cpu = nes_prof_ppu = nes_prof_apu = 0; display_wait_us = 0; push_us = 0;
+    int64_t t_start = esp_timer_get_time();
+    pad_edges();
     for (;;) {
         int64_t f0 = esp_timer_get_time();
-        uint32_t b = pad_now();
-        if ((b & PAD_MENU) && !(prev & PAD_MENU)) {
+        uint32_t b;
+        if (demo) {
+            if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the picker"); return true; }
+            if (f0 - t_start > (int64_t)DEMO_SECONDS * 1000000) return false;
+            b = demo_bot(f0 - t_start);
+        } else {
+            b = pad_now();
+        }
+        if (!demo && (b & PAD_MENU) && !(prev & PAD_MENU)) {
             sram_flush(nes, rom, true);
             int a = game_menu(rom);
             if (a == MENU_SAVE) saves_save_state(rom);
             if (a == MENU_LOAD) saves_load_state(rom);
             if (a == MENU_CONTROLLER) controller_screen(false);
-            if (a == MENU_PICKER) return;
+            if (a == MENU_PICKER) return false;
             prev = pad_now();
             underruns0 = audio_get_underrun_count();   /* menus don't feed the DAC; don't count that */
             continue;
@@ -360,7 +416,7 @@ static void run_game(int idx)
          * the next frame only emulates (no PPU drawing, no push) so the queue refills.
          * Audio never gaps; the picture drops frames only as fast as the game is slow. */
         draw = audio_queued_samples() >= 3 * AUDIO_DMA_FRAME_NUM;
-        if (frames % 60 == 0) sram_flush(nes, rom, false);
+        if (frames % 60 == 0 && !demo) sram_flush(nes, rom, false);
         if (f1 - t_report >= 5000000) {
             /* profile: cycle counters at 160 MHz -> us; push = strip conversion CPU, dma wait = blocked on SPI */
             uint32_t mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
@@ -400,10 +456,17 @@ void app_main(void)
     saves_init();
     log_heap("after display+audio+BLE");
 
-    controller_screen(true);
+    bool have_pad = controller_screen(true);
     int sel = 0;
     for (;;) {
+        if (!have_pad || sel < 0) {
+            /* demo mode: every ROM in turn until someone presses a button */
+            bool pressed = false;
+            serial_demo = false;
+            for (int i = 0; nroms && !pressed; i = (i + 1) % nroms) pressed = run_game(i, true);
+            have_pad = true; sel = 0;
+        }
         sel = picker(sel);
-        run_game(sel);
+        if (sel >= 0) run_game(sel, false);
     }
 }
