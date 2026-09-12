@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_partition.h"
+#include "esp_system.h"
 #include "esp_rom_crc.h"
 #include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
@@ -642,6 +643,7 @@ void app_main(void)
     demo_settings_load();
     display_set_orientation(portrait);
     log_heap("after display+audio+BLE");
+    ESP_LOGI(TAG, "reset reason %d (1 power-on, 3 software, 6 task wdt, 7 int wdt, 8 deep sleep, 9 brownout)", esp_reset_reason());
 
     music_start(MUSIC_TRACK);
     splash_run();

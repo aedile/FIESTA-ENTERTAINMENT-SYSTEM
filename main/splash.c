@@ -8,6 +8,7 @@
 #include "festive.h"
 
 #define SPLASH_FRAMES (60 * 20)
+#define FLASH_FRAMES 6
 #define GROUND 204
 
 /* visible window in portrait is columns 8..247 of the 256-wide frame */
@@ -190,33 +191,34 @@ static void cut(int t, const char *game, int from, uint8_t colour, const char *w
     int w, h;
     const uint8_t *art = splash_cover(game, &w, &h);
     ui_clear(UI_BLACK);
-    if (t < 2) { ui_fill(L, 0, R - L, FB_LINES, UI_WHITE); return; }   /* the flash */
+    if (t < FLASH_FRAMES) { ui_fill(L, 0, R - L, FB_LINES, (t & 1) ? UI_WHITE : CUBE(5,5,4)); return; }   /* the flash */
+    t -= FLASH_FRAMES;
     speed_lines(t, from == 1 ? 1 : -1);
     int slide = t < 10 ? (10 - t) * 30 : 0;
-    int num = 6 + (t > 10 ? (t - 10) / 14 : 0), den = 4;   /* 1.5x, creeping up to 2x */
+    int num = 6 + (t > 10 ? (t - 10) / 16 : 0), den = 4;   /* 1.5x, creeping up to 2x */
     if (num > 8) num = 8;
     int cw = w * num / den, ch = h * num / den;
     int x = CX - cw / 2 + (from == 0 ? slide : from == 1 ? -slide : 0);
-    int y = 92 - ch / 2 + (from == 2 ? slide : 0);
+    int y = 84 - ch / 2 + (from == 2 ? slide : 0);
     if (art) ui_bitmap(x, y, art, w, h, num, den);
     else ui_fill(x, y, cw, ch, UI_GREY);
-    ui_fill(L, 162, R - L, 52, UI_BLACK);
-    ui_fill(L, 162, R - L, 2, colour); ui_fill(L, 212, R - L, 2, colour);
-    ui_text_scaled(word_x + 3, 172 + 3, word, CUBE(1,0,1), 4);
-    ui_text_scaled(word_x, 172, word, colour, 4);
+    ui_fill(L, 154, R - L, 64, UI_BLACK);
+    ui_fill(L, 154, R - L, 3, colour); ui_fill(L, 215, R - L, 3, colour);
+    ui_text_scaled(word_x + 4, 166 + 4, word, CUBE(1,0,1), 5);
+    ui_text_scaled(word_x, 166, word, colour, 5);
 }
 
-#define CUT_FRAMES 90
+#define CUT_FRAMES 108
 
 static bool cold_open(void)
 {
-    /* FIESTA races right-to-left in 5x letters over speed lines */
-    for (int t = 0; t < 130; t++) {
+    /* FIESTA races right-to-left in 6x letters over speed lines */
+    for (int t = 0; t < 156; t++) {
         ui_clear(UI_BLACK);
         speed_lines(t, -1);
-        int x = R + 20 - t * 4;   /* 240 px wide word */
-        ui_text_scaled(x + 4, 100 + 4, "FIESTA", CUBE(2,0,1), 5);
-        ui_text_scaled(x, 100, "FIESTA", (t >> 2) & 1 ? CUBE(5,5,0) : CUBE(5,1,3), 5);
+        int x = R + 20 - t * 4;   /* 288 px wide word, 624 px of travel */
+        ui_text_scaled(x + 5, 96 + 5, "FIESTA", CUBE(2,0,1), 6);
+        ui_text_scaled(x, 96, "FIESTA", (t >> 2) & 1 ? CUBE(5,5,0) : CUBE(5,1,3), 6);
         music_tick_hook((t & 1) ? NULL : ui_line_push);
         if (splash_skip_requested()) return false;
     }
@@ -231,22 +233,26 @@ static bool cold_open(void)
         for (int t = 0; t < CUT_FRAMES; t++) {
             const char *word = c < 2 ? "ENTERTAINMENT" : "SYSTEM";
             int wx;
+            int tt = t < FLASH_FRAMES ? 0 : t - FLASH_FRAMES;
             if (c < 2) {
-                /* slide in fast over the first 20 frames to park ENTER (cut 0) or TAINMENT (cut 1)
-                 * under the cover, then crawl left so the word keeps moving */
-                static const int target[2] = { 48, 48 - 5 * 32 }, start[2] = { R + 8, 48 - 35 };
-                wx = target[c] + (t < 20 ? (start[c] - target[c]) * (20 - t) / 20 : -(t - 20) / 2);
+                /* 5x letters are 40 px: ENTER (200 px) parks under Mario and crawls slowly;
+                 * TAINMENT (320 px) parks under Zelda and crawls faster so MENT arrives by the end */
+                static const int target[2] = { 28, 28 - 5 * 40 }, start[2] = { R + 8, 28 - 30 };
+                int crawl = c == 0 ? (tt - 20) / 2 : (tt - 20) * 3 / 2;
+                wx = target[c] + (tt < 20 ? (start[c] - target[c]) * (20 - tt) / 20 : -crawl);
             } else {
-                int punch = t < 10 ? (10 - t) * 24 : 0;
-                wx = CX - 192 / 2 + punch;
+                int punch = tt < 10 ? (10 - tt) * 24 : 0;
+                wx = CX - 240 / 2 + punch;
             }
             cut(t, cuts[c].game, cuts[c].from, cuts[c].colour, word, wx);
             music_tick_hook((t & 1) ? NULL : ui_line_push);
             if (splash_skip_requested()) return false;
         }
     /* flash into the scene */
-    ui_fill(L, 0, R - L, FB_LINES, UI_WHITE);
-    music_tick_hook(ui_line_push);
+    for (int t = 0; t < FLASH_FRAMES; t++) {
+        ui_fill(L, 0, R - L, FB_LINES, (t & 1) ? UI_WHITE : CUBE(5,5,4));
+        music_tick_hook((t & 1) ? NULL : ui_line_push);
+    }
     return true;
 }
 

@@ -42,13 +42,16 @@ void medal_init(void)
 uint32_t medal_poll(void)
 {
     static int64_t down_since[2];
-    static bool fired[2];
+    static bool fired[2], armed[2];
     static const gpio_num_t pin[2] = { PIN_BTN_BOOT, PIN_BTN_PWR };
     static const int64_t hold_us[2] = { 10000000, 2000000 };
     int64_t now = esp_timer_get_time();
     uint32_t ev = 0;
     for (int i = 0; i < 2; i++) {
         bool down = gpio_get_level(pin[i]) == 0;
+        /* the medal is switched on by holding PWR: a button still held from before boot must
+         * be released once before it counts, or the power-off hold fires and reboots the medal */
+        if (!armed[i]) { if (!down) armed[i] = true; continue; }
         if (down && !down_since[i]) { down_since[i] = now; fired[i] = false; }
         if (down && !fired[i] && now - down_since[i] >= hold_us[i]) { fired[i] = true; ev |= i ? BTN_PWR_LONG : BTN_BOOT_HOLD10; }
         if (!down && down_since[i]) {
