@@ -227,7 +227,7 @@ static bool cold_open(void)
     static const struct { const char *game; int from; uint8_t colour; } cuts[4] = {
         { "Super Mario Bros.", 0, CUBE(5,0,0) },
         { "Legend of Zelda, The", 1, CUBE(1,5,1) },
-        { "Contra", 2, CUBE(1,2,5) },
+        { "Contra", 2, CUBE(1,2,4) },
         { "Metroid", 0, CUBE(5,3,0) },
     };
     for (int c = 0; c < 4; c++)
