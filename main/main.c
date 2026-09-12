@@ -31,6 +31,7 @@
 #include "medal.h"
 #include "music.h"
 #include "splash.h"
+#include "festive.h"
 #include "core.h"
 #include "nes/nes.h"
 #include "palettes.h"
@@ -278,9 +279,7 @@ static bool controller_screen(bool boot)
     int64_t deadline = esp_timer_get_time() + ((boot && ble_pad_has_saved()) ? 5000000 : 0);
     int64_t demo_at = esp_timer_get_time() + DEMO_AFTER_US;
     bool any = false;
-    int sel = 0;
-    ble_pad_state_t shown = -1;
-    int64_t last_draw = 0;
+    int sel = 0, anim = 0;
     ui_palette_cube();
     music_start(MUSIC_TRACK);
     pad_edges();
@@ -290,8 +289,8 @@ static bool controller_screen(bool boot)
         if (!any && !connected && esp_timer_get_time() > deadline) { any = true; ble_pad_scan_any(true); }
         if (connected && any) { any = false; ble_pad_scan_any(false); }   /* reconnects go to this pad only */
         uint32_t mev = medal_events();
-        if (mev & BTN_BOOT_HOLD10) { any = true; shown = -1; }
-        if (mev & BTN_BOOT_HOLD3) { toast_mute(); shown = -1; }
+        if (mev & BTN_BOOT_HOLD10) any = true;
+        if (mev & BTN_BOOT_HOLD3) toast_mute();
         if (mev & BTN_PWR_SHORT) return false;
 
         uint32_t e = pad_edges();
@@ -304,31 +303,33 @@ static bool controller_screen(bool boot)
         if (boot && connected) return true;
         if (!connected && !serial_active() && esp_timer_get_time() > demo_at) return false;
 
-        if (st != shown || esp_timer_get_time() - last_draw > 250000) {
-            shown = st; last_draw = esp_timer_get_time();
+        {
+            int frame = anim++;
             ui_clear(UI_BLACK);
-            ui_text_center(16, "CONTROLLER", UI_YELLOW);
+            festive_confetti(frame);
+            festive_papel_picado(frame);
+            ui_text_center(36, "CONTROLLER", UI_YELLOW);
             const char *s = "Idle"; uint8_t c = UI_GREY;
             if (st == PAD_SCANNING) { s = "Scanning..."; c = UI_WHITE; }
             if (st == PAD_CONNECTING) { s = "Connecting..."; c = UI_YELLOW; }
             if (connected) { s = "Connected"; c = UI_GREEN; }
             ui_text(UI_LEFT + 8, 52, "Status:", UI_GREY); ui_text(104, 52, s, c);
-            ui_text(UI_LEFT + 8, 68, "Found:", UI_GREY);  ui_text(104, 68, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
-            ui_text(UI_LEFT + 8, 84, "Saved:", UI_GREY);  ui_text(104, 84, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
+            ui_text(UI_LEFT + 8, 64, "Found:", UI_GREY);  ui_text(104, 64, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
+            ui_text(UI_LEFT + 8, 76, "Saved:", UI_GREY);  ui_text(104, 76, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
+            festive_dancers(frame, 146);
             if (!connected) {
-                ui_text_center(120, "Put the controller in", UI_WHITE);
-                ui_text_center(132, "pairing mode", UI_WHITE);
+                ui_text_center(156, "Put the controller in", UI_WHITE);
+                ui_text_center(168, "pairing mode", UI_WHITE);
                 char d[32]; snprintf(d, sizeof d, "demo mode in %d s", (int)((demo_at - esp_timer_get_time()) / 1000000));
-                ui_text_center(160, d, UI_GREY);
+                ui_text_center(184, d, UI_GREY);
             } else {
-                ui_text(40, 120, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(56, 120, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
-                ui_text(40, 136, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(56, 136, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
+                ui_text(48, 156, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(64, 156, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
+                ui_text(48, 170, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(64, 170, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
             }
             ui_text_center(200, "PWR demo now  hold: power off", UI_GREY);
             ui_text_center(216, "BOOT 3s mute  10s forget pad", UI_GREY);
-            ui_present();
+            music_tick_hook((frame & 1) ? NULL : ui_line_push);   /* 30 fps under the music */
         }
-        music_tick();
     }
 }
 
@@ -350,7 +351,7 @@ static int picker(int sel)
 {
     bool has_save[64];
     for (int i = 0; i < nroms && i < 64; i++) has_save[i] = saves_has_sram(roms[i].name);
-    bool dirty = true;
+    int anim = 0;
     int64_t last_input = esp_timer_get_time();
     ui_palette_cube();
     display_set_backlight(BACKLIGHT_PLAY);
@@ -359,44 +360,47 @@ static int picker(int sel)
     for (;;) {
         uint32_t e = pad_edges(), mev = medal_events();
         if (e || mev) last_input = esp_timer_get_time();
-        if ((e & PAD_LEFT) && sel > 0) { sel--; dirty = true; }
-        if (((e & PAD_RIGHT) || (mev & BTN_PWR_SHORT)) && sel < nroms - 1) { sel++; dirty = true; }
+        if ((e & PAD_LEFT) && sel > 0) { sel--; }
+        if (((e & PAD_RIGHT) || (mev & BTN_PWR_SHORT)) && sel < nroms - 1) { sel++; }
         if (e & PAD_A) return sel;
-        if (e & PAD_B) { demo_set_skip(sel, !demo_skip[sel]); dirty = true; }
-        if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); dirty = true; }
-        if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "START to switch"); dirty = true; }
-        if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); dirty = true; }
-        if (mev & BTN_BOOT_HOLD3) { toast_mute(); dirty = true; }
+        if (e & PAD_B) { demo_set_skip(sel, !demo_skip[sel]); }
+        if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); }
+        if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "START to switch"); }
+        if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); }
+        if (mev & BTN_BOOT_HOLD3) { toast_mute(); }
         if (serial_demo) { serial_demo = false; return -1; }
         if (esp_timer_get_time() - last_input > IDLE_AFTER_US) return -1;
-        if (e & PAD_MENU) { if (!controller_screen(false)) return -1; ui_palette_cube(); dirty = true; }
-        if (ble_pad_state() != PAD_CONNECTED && !serial_active()) { if (!controller_screen(false)) return -1; ui_palette_cube(); dirty = true; }
-        if (dirty) {
-            dirty = false;
+        if (e & PAD_MENU) { if (!controller_screen(false)) return -1; ui_palette_cube(); }
+        if (ble_pad_state() != PAD_CONNECTED && !serial_active()) { if (!controller_screen(false)) return -1; ui_palette_cube(); }
+        {
+            int frame = anim++;
             ui_clear(UI_BLACK);
-            ui_text(UI_LEFT, 6, "F.E.S.", UI_YELLOW);
+            festive_confetti(frame);
+            festive_papel_picado(frame);
+            ui_text(UI_LEFT, 38, "F.E.S.", UI_YELLOW);
             char bat[8]; snprintf(bat, sizeof bat, "%d%%", medal_battery_percent());
-            ui_text(UI_RIGHT - 8 * strlen(bat), 6, bat, UI_GREY);
-            if (nroms == 0) { ui_text_center(100, "No ROMs in partition", UI_RED); ui_present(); continue; }
-            if (sel > 0) draw_cover(sel - 1, 48, 96, 1, 2);
-            if (sel + 1 < nroms) draw_cover(sel + 1, 208, 96, 1, 2);
-            draw_cover(sel, 128, 92, 1, 1);
-            ui_frame(128 - 50, 92 - 69, 100, 138, sel == demo_lock ? UI_YELLOW : UI_WHITE);
+            ui_text(UI_LEFT + 64, 38, bat, UI_GREY);
+            if (nroms == 0) { ui_text_center(100, "No ROMs in partition", UI_RED); music_tick_hook(ui_line_push); continue; }
+            if (sel > 0) draw_cover(sel - 1, 48, 116, 1, 2);
+            if (sel + 1 < nroms) draw_cover(sel + 1, 208, 116, 1, 2);
+            draw_cover(sel, 128, 116, 1, 1);
+            uint8_t fc = sel == demo_lock ? UI_YELLOW : fiesta_colours[(frame >> 4) % 6];
+            ui_frame(128 - 50, 116 - 69, 100, 138, fc);
+            ui_frame(128 - 51, 116 - 70, 102, 140, fc);
             char name[29]; short_name(roms[sel].name, name, sizeof name);
-            ui_text_center(168, name, UI_WHITE);
+            ui_text_center(190, name, UI_WHITE);
             char tags[40] = "";
             if (has_save[sel]) strcat(tags, "* saved  ");
             if (demo_skip[sel]) strcat(tags, "no demo  ");
             if (sel == demo_lock) strcat(tags, "demo locked  ");
             if (muted) strcat(tags, "muted");
-            ui_text_center(184, tags, has_save[sel] ? UI_GREEN : UI_GREY);
+            ui_text_center(203, tags, has_save[sel] ? UI_GREEN : UI_GREY);
             char pos[24]; snprintf(pos, sizeof pos, "%d/%d", sel + 1, nroms);
-            ui_text_center(200, pos, UI_GREY);
-            ui_text_center(216, "A play  B demo  SELECT mute", UI_GREY);
+            ui_text(UI_RIGHT - 8 * strlen(pos), 38, pos, UI_GREY);
+            ui_text_center(216, "A play  B demo  SEL mute", UI_GREY);
             ui_text_center(228, "START rotate  MENU controller", UI_GREY);
-            ui_present();
+            music_tick_hook((frame & 1) ? NULL : ui_line_push);
         }
-        music_tick();
     }
 }
 
