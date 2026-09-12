@@ -7,7 +7,7 @@
 #include "music.h"
 
 #define CUBE(r, g, b) ((uint8_t)((r) * 30 + (g) * 5 + (b)))   /* 6x6x5 palette from ui_palette_cube */
-#define SPLASH_FRAMES (60 * 11)
+#define SPLASH_FRAMES (60 * 30)
 #define GROUND 204
 
 /* visible window in portrait is columns 8..247 of the 256-wide frame */
@@ -97,11 +97,35 @@ static void skyline(void)
     ui_fill(L, GROUND, R - L, FB_LINES - GROUND, CUBE(0,0,1));
 }
 
+/* a proper night sky: ~100 stars in three brightness tiers, each twinkling on its own
+ * phase, the brightest flaring into 4-point sparkles, and a shooting star now and then */
 static void stars(int frame)
 {
-    for (int i = 0; i < 40; i++) {
-        int x = L + (i * 61) % (R - L), y = (i * 37) % 80;
-        px(x, y, ((frame >> 4) + i) & 3 ? UI_GREY : UI_WHITE);
+    static const uint8_t tier[3] = { CUBE(1,1,2), CUBE(3,3,4), UI_WHITE };
+    for (int i = 0; i < 100; i++) {
+        uint32_t h = (uint32_t)i * 2654435761u;
+        int x = L + (h >> 8) % (R - L), y = (h >> 20) % 150;
+        int t = (h >> 4) % 10;                      /* 0-5 dim, 6-8 mid, 9 bright */
+        int phase = (frame + (h & 63)) >> 3;
+        int tw = ((phase * 5 + i) % 7);             /* 0..6 twinkle level */
+        if (t < 6) { if (tw > 1) px(x, y, tier[0]); }
+        else if (t < 9) { px(x, y, tw > 4 ? tier[2] : tier[1]); }
+        else {
+            px(x, y, UI_WHITE);
+            if (tw == 6) { px(x - 1, y, tier[1]); px(x + 1, y, tier[1]); px(x, y - 1, tier[1]); px(x, y + 1, tier[1]); }
+            if (tw == 5) { px(x - 1, y, tier[0]); px(x + 1, y, tier[0]); }
+        }
+    }
+    /* shooting star: one every ~6 s, a 40-frame streak with a fading tail */
+    int cycle = frame % 360;
+    if (cycle < 40) {
+        uint32_t h = (uint32_t)(frame / 360 + 7) * 2246822519u;
+        int x0 = L + 20 + (h >> 8) % 140, y0 = 10 + (h >> 20) % 50;
+        int x = x0 + cycle * 3, y = y0 + cycle;
+        for (int k = 0; k < 10; k++) {
+            uint8_t c = k < 2 ? UI_WHITE : k < 5 ? tier[1] : tier[0];
+            px(x - k * 3, y - k, c);
+        }
     }
 }
 
