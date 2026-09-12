@@ -245,7 +245,7 @@ static void toast(const char *line1, const char *line2)
     for (int i = 0; i < 60; i++) music_tick();   /* ~1 s, music keeps playing if any */
 }
 
-static void toast_mute(void) { toast(muted ? "Muted" : "Sound on", "hold BOOT 3 s to toggle"); }
+static void toast_mute(void) { toast(muted ? "Muted" : "Sound on", "SELECT or hold BOOT 3 s"); }
 
 static void toggle_lock(int idx)
 {
@@ -345,6 +345,7 @@ static int picker(int sel)
         if (((e & PAD_RIGHT) || (mev & BTN_PWR_SHORT)) && sel < nroms - 1) { sel++; dirty = true; }
         if (e & PAD_A) return sel;
         if (e & PAD_B) { demo_set_skip(sel, !demo_skip[sel]); dirty = true; }
+        if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); dirty = true; }
         if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); dirty = true; }
         if (mev & BTN_BOOT_HOLD3) { toast_mute(); dirty = true; }
         if (serial_demo) { serial_demo = false; return -1; }
@@ -372,7 +373,7 @@ static int picker(int sel)
             ui_text_center(184, tags, has_save[sel] ? UI_GREEN : UI_GREY);
             char pos[24]; snprintf(pos, sizeof pos, "%d/%d", sel + 1, nroms);
             ui_text_center(200, pos, UI_GREY);
-            ui_text_center(228, "A play  B demo on/off  MENU pad", UI_GREY);
+            ui_text_center(228, "A play  B demo  SELECT mute  MENU pad", UI_GREY);
             ui_present();
         }
         music_tick();
