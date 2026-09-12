@@ -36,7 +36,7 @@ def pack(roms):
         blob += data + b"\xff" * (-len(data) & 15)
         off += len(data) + (-len(data) & 15)
     head = struct.pack("<4sI", b"NESR", len(roms)) + table
-    return head + b"\xff" * ((hdr + 15) & ~15 - hdr) + blob
+    return head + b"\xff" * (-hdr & 15) + blob
 
 if __name__ == "__main__":
     roms = collect(sys.argv[1])
