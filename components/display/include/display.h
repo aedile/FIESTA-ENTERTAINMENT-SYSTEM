@@ -63,6 +63,13 @@ void display_write_preswapped(const uint16_t *data, uint32_t len);
 void display_push_indexed(const uint8_t *fb, int pitch, const uint16_t *pal);
 
 /**
+ * Same, one STRIP_ROWS strip at a time: rows points at the first of the strip's
+ * rows, y0 is its screen row (0 starts a new frame). Returns once the strip is
+ * queued for DMA, so the caller can go on rendering while it transfers.
+ */
+void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal);
+
+/**
  * Wait for pending DMA transfer to complete
  */
 void display_wait_done(void);

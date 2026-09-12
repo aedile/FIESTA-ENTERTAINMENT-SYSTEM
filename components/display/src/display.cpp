@@ -242,35 +242,41 @@ void display_write_preswapped(const uint16_t *data, uint32_t len) {
   current_buffer = 1 - current_buffer;
 }
 
-void display_push_indexed(const uint8_t *fb, int pitch, const uint16_t *pal) {
-  display_set_window(GAME_X_OFFSET, 0, GAME_WIDTH, GAME_HEIGHT);
-  for (int y = 0; y < GAME_HEIGHT; y += STRIP_ROWS) {
-    // Convert the next strip into the free buffer while the other one is on the wire.
-    uint16_t *dst = (uint16_t *)dma_buffer[current_buffer];
-    for (int r = 0; r < STRIP_ROWS; r++) {
-      const uint8_t *src = fb + (y + r) * pitch;
-      for (int x = 0; x < GAME_WIDTH; x += 4) {
-        dst[x] = pal[src[x]];
-        dst[x + 1] = pal[src[x + 1]];
-        dst[x + 2] = pal[src[x + 2]];
-        dst[x + 3] = pal[src[x + 3]];
-      }
-      dst += GAME_WIDTH;
-    }
-    if (trans_pending) {
-      spi_transaction_t *rtrans;
-      spi_device_get_trans_result(spi_handle, &rtrans, portMAX_DELAY);
-      trans_pending = false;
-    }
-    trans[current_buffer].length = DMA_BUFFER_SIZE * 8;
-    trans[current_buffer].rxlength = 0;
-    trans[current_buffer].tx_buffer = dma_buffer[current_buffer];
-    trans[current_buffer].rx_buffer = nullptr;
-    trans[current_buffer].user = (void *)1;
-    spi_device_queue_trans(spi_handle, &trans[current_buffer], portMAX_DELAY);
-    trans_pending = true;
-    current_buffer = 1 - current_buffer;
+void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal) {
+  if (y0 == 0) {
+    display_wait_done();   // commands are polling transfers: the queue must be empty
+    display_set_window(GAME_X_OFFSET, 0, GAME_WIDTH, GAME_HEIGHT);
   }
+  // Convert into the free buffer while the other strip is on the wire.
+  uint16_t *dst = (uint16_t *)dma_buffer[current_buffer];
+  for (int r = 0; r < STRIP_ROWS; r++) {
+    const uint8_t *src = rows + r * pitch;
+    for (int x = 0; x < GAME_WIDTH; x += 4) {
+      dst[x] = pal[src[x]];
+      dst[x + 1] = pal[src[x + 1]];
+      dst[x + 2] = pal[src[x + 2]];
+      dst[x + 3] = pal[src[x + 3]];
+    }
+    dst += GAME_WIDTH;
+  }
+  if (trans_pending) {
+    spi_transaction_t *rtrans;
+    spi_device_get_trans_result(spi_handle, &rtrans, portMAX_DELAY);
+    trans_pending = false;
+  }
+  trans[current_buffer].length = DMA_BUFFER_SIZE * 8;
+  trans[current_buffer].rxlength = 0;
+  trans[current_buffer].tx_buffer = dma_buffer[current_buffer];
+  trans[current_buffer].rx_buffer = nullptr;
+  trans[current_buffer].user = (void *)1;
+  spi_device_queue_trans(spi_handle, &trans[current_buffer], portMAX_DELAY);
+  trans_pending = true;
+  current_buffer = 1 - current_buffer;
+}
+
+void display_push_indexed(const uint8_t *fb, int pitch, const uint16_t *pal) {
+  for (int y = 0; y < GAME_HEIGHT; y += STRIP_ROWS)
+    display_push_strip(fb + y * pitch, pitch, y, pal);
 }
 
 void display_wait_done(void) {
