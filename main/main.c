@@ -251,6 +251,16 @@ static uint32_t medal_events(void)
 
 bool splash_skip_requested(void) { return pad_edges() || (medal_events() & (BTN_BOOT_SHORT | BTN_PWR_SHORT)); }
 
+const uint8_t *splash_cover(const char *sn, int *w, int *h)
+{
+    for (int i = 0; i < nroms; i++) {
+        char n[29]; short_name(roms[i].name, n, sizeof n);
+        if (strcmp(n, sn) == 0 && roms[i].art_off) { *w = roms[i].art_w; *h = roms[i].art_h; return roms_base + roms[i].art_off; }
+    }
+    *w = 96; *h = 134;
+    return NULL;
+}
+
 /* ---- overlays ---- */
 static void toast(const char *line1, const char *line2)
 {
