@@ -317,6 +317,7 @@ static void run_game(int idx)
     bool draw = true;
     int64_t t_report = esp_timer_get_time(), emu_us = 0, wait_us = 0;
     uint32_t prev = 0, underruns0 = audio_get_underrun_count();
+    nes_prof_cpu = nes_prof_ppu = nes_prof_apu = 0; display_wait_us = 0; push_us = 0;
     for (;;) {
         int64_t f0 = esp_timer_get_time();
         uint32_t b = pad_now();
@@ -349,10 +350,14 @@ static void run_game(int idx)
         draw = audio_queued_samples() >= 3 * AUDIO_DMA_FRAME_NUM;
         if (frames % 60 == 0) sram_flush(nes, rom, false);
         if (f1 - t_report >= 5000000) {
-            ESP_LOGI(TAG, "%d fps (%d skipped) | per frame: emu %lld us, push %lld us, audio wait %lld us | underruns %lu | heap %lu",
-                     frames / 5, skipped / 5, emu_us / frames, push_us / frames, wait_us / frames,
-                     audio_get_underrun_count() - underruns0, esp_get_free_heap_size());
+            /* profile: cycle counters at 160 MHz -> us; push = strip conversion CPU, dma wait = blocked on SPI */
+            uint32_t mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ;
+            ESP_LOGI(TAG, "%d fps (%d skipped) | us/frame: cpu %lu ppu %lu apu %lu push %lld dmawait %lu audiowait %lld | total %lld | underruns %lu | heap %lu",
+                     frames / 5, skipped / 5, nes_prof_cpu / mhz / frames, nes_prof_ppu / mhz / frames, nes_prof_apu / mhz / frames,
+                     (push_us - display_wait_us) / frames, display_wait_us / frames, wait_us / frames,
+                     (f1 - t_report) / frames, audio_get_underrun_count() - underruns0, esp_get_free_heap_size());
             frames = skipped = 0; emu_us = push_us = wait_us = 0; t_report = f1;
+            nes_prof_cpu = nes_prof_ppu = nes_prof_apu = 0; display_wait_us = 0;
             underruns0 = audio_get_underrun_count();
         }
     }

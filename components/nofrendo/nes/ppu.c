@@ -626,7 +626,7 @@ bool ppu_enabled(void)
    return (ppu.bg_on || ppu.obj_on);
 }
 
-void ppu_endline(void)
+IRAM_ATTR void ppu_endline(void)
 {
    /* modify vram address at end of scanline */
    if (ppu.scanline < 240 && (ppu.bg_on || ppu.obj_on))
@@ -655,7 +655,7 @@ void ppu_endline(void)
    }
 }
 
-void ppu_renderline(uint8 *bmp, int scanline, bool draw_flag)
+IRAM_ATTR void ppu_renderline(uint8 *bmp, int scanline, bool draw_flag)
 {
    ppu.scanline = scanline;
 
