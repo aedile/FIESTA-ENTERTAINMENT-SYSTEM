@@ -44,6 +44,9 @@ static const char *TAG = "NESTOR";
 #endif
 #define BACKLIGHT_PLAY  153          /* 60 %, as PELLETINO */
 #define BACKLIGHT_DEMO  76           /* 30 % */
+#ifndef DEFAULT_PORTRAIT
+#define DEFAULT_PORTRAIT 1           /* medals are mounted portrait; START in the picker flips it (kept in NVS) */
+#endif
 #define MUSIC_TRACK     7            /* DuckTales NSF (joshw rip of the release): 7 = The Moon */
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
@@ -95,7 +98,7 @@ static void log_heap(const char *when)
 #define NVS_NS "nestor"
 static int demo_lock = -1;        /* index of the game the demo is locked to, -1 = cycle */
 static bool demo_skip[64];
-static bool muted;
+static bool muted, portrait = DEFAULT_PORTRAIT;
 /* games left out of the demo cycle unless toggled back in with B in the picker (matched by short name) */
 static const char *const demo_skip_default[] = { "DuckTales", "Double Dragon", "Mega Man", "Final Fantasy" };
 
@@ -125,6 +128,7 @@ static void demo_settings_load(void)
     uint8_t m = 0;
     muted = nvs_get_u8(h, "mute", &m) == ESP_OK && m;
     audio_set_mute(muted);
+    if (nvs_get_u8(h, "portrait", &m) == ESP_OK) portrait = m;
     nvs_close(h);
     ESP_LOGI(TAG, "demo lock: %s", demo_lock >= 0 ? roms[demo_lock].name : "none");
 }
@@ -155,6 +159,15 @@ static void set_mute(bool m)
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "mute", m); nvs_commit(h); nvs_close(h); }
     ESP_LOGI(TAG, "%s", m ? "muted" : "sound on");
+}
+
+static void set_portrait(bool p)
+{
+    portrait = p;
+    display_set_orientation(p);
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "portrait", p); nvs_commit(h); nvs_close(h); }
+    ESP_LOGI(TAG, "%s", p ? "portrait" : "landscape");
 }
 
 static int demo_next(int i)
@@ -306,8 +319,8 @@ static bool controller_screen(bool boot)
                 ui_text(40, 120, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(56, 120, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
                 ui_text(40, 136, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(56, 136, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
             }
-            ui_text_center(200, "PWR: demo now   hold: power off", UI_GREY);
-            ui_text_center(216, "BOOT 3s: mute   10s: forget pad", UI_GREY);
+            ui_text_center(200, "PWR demo now  hold: power off", UI_GREY);
+            ui_text_center(216, "BOOT 3s mute  10s forget pad", UI_GREY);
             ui_present();
         }
         music_tick();
@@ -346,6 +359,7 @@ static int picker(int sel)
         if (e & PAD_A) return sel;
         if (e & PAD_B) { demo_set_skip(sel, !demo_skip[sel]); dirty = true; }
         if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); dirty = true; }
+        if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "START to switch"); dirty = true; }
         if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); dirty = true; }
         if (mev & BTN_BOOT_HOLD3) { toast_mute(); dirty = true; }
         if (serial_demo) { serial_demo = false; return -1; }
@@ -355,9 +369,9 @@ static int picker(int sel)
         if (dirty) {
             dirty = false;
             ui_clear(UI_BLACK);
-            ui_text(8, 6, "NESTOR", UI_YELLOW);
+            ui_text(16, 6, "NESTOR", UI_YELLOW);
             char bat[8]; snprintf(bat, sizeof bat, "%d%%", medal_battery_percent());
-            ui_text(256 - 8 - 8 * strlen(bat), 6, bat, UI_GREY);
+            ui_text(240 - 8 * strlen(bat), 6, bat, UI_GREY);
             if (nroms == 0) { ui_text_center(100, "No ROMs in partition", UI_RED); ui_present(); continue; }
             if (sel > 0) draw_cover(sel - 1, 40, 96, 1, 2);
             if (sel + 1 < nroms) draw_cover(sel + 1, 216, 96, 1, 2);
@@ -373,7 +387,8 @@ static int picker(int sel)
             ui_text_center(184, tags, has_save[sel] ? UI_GREEN : UI_GREY);
             char pos[24]; snprintf(pos, sizeof pos, "%d/%d", sel + 1, nroms);
             ui_text_center(200, pos, UI_GREY);
-            ui_text_center(228, "A play  B demo  SELECT mute  MENU pad", UI_GREY);
+            ui_text_center(216, "A play  B demo  SELECT mute", UI_GREY);
+            ui_text_center(228, "START rotate  MENU controller", UI_GREY);
             ui_present();
         }
         music_tick();
@@ -420,7 +435,7 @@ static int64_t push_us;
 static void push_strip(uint8 *bmp, int y0, int rows)
 {
     int64_t a = esp_timer_get_time();
-    display_push_strip(bmp + y0 * FB_PITCH + FB_XOFF, FB_PITCH, y0, ui_pal);
+    display_push_strip(bmp + y0 * FB_PITCH + FB_XOFF + ui_crop(), FB_PITCH, y0, ui_pal);
     push_us += esp_timer_get_time() - a;   /* conversion + any wait for the previous strip */
 }
 
@@ -606,6 +621,7 @@ void app_main(void)
     roms_init();
     saves_init();
     demo_settings_load();
+    display_set_orientation(portrait);
     log_heap("after display+audio+BLE");
 
     bool have_pad = controller_screen(true);

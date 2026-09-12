@@ -54,9 +54,11 @@ void ui_text_center(int y, const char *s, uint8_t colour)
 
 void ui_present(void)
 {
-    display_push_indexed(ui_fb + FB_XOFF, FB_PITCH, ui_pal);
+    display_push_indexed(ui_fb + FB_XOFF + ui_crop(), FB_PITCH, ui_pal);
     display_wait_done();
 }
+
+int ui_crop(void) { return (256 - display_game_width()) / 2; }
 
 void ui_palette_cube(void)
 {
