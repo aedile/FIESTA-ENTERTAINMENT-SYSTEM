@@ -38,7 +38,7 @@ static const char *TAG = "NESTOR";
 #define DEMO_AFTER_US   30000000LL   /* no controller for this long -> demo mode */
 #define IDLE_AFTER_US   180000000LL  /* pad connected but untouched this long -> demo mode */
 #ifndef DEMO_SECONDS
-#define DEMO_SECONDS    60           /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=300) */
+#define DEMO_SECONDS    120          /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=30) */
 #endif
 #define BACKLIGHT_PLAY  153          /* 60 %, as PELLETINO */
 #define BACKLIGHT_DEMO  76           /* 30 % */
@@ -93,6 +93,8 @@ static void log_heap(const char *when)
 static int demo_lock = -1;        /* index of the game the demo is locked to, -1 = cycle */
 static bool demo_skip[64];
 static bool muted;
+/* games left out of the demo cycle unless toggled back in with B in the picker (matched by short name) */
+static const char *const demo_skip_default[] = { "DuckTales" };
 
 static void nvs_key_for(char out[16], char type, const char *rom)
 {
@@ -109,7 +111,13 @@ static void demo_settings_load(void)
     for (int i = 0; i < nroms && i < 64; i++) {
         char k[16]; uint8_t v = 0;
         nvs_key_for(k, 'd', roms[i].name);
-        demo_skip[i] = nvs_get_u8(h, k, &v) == ESP_OK && v;
+        if (nvs_get_u8(h, k, &v) == ESP_OK) {
+            demo_skip[i] = v;
+        } else {
+            char sn[29]; short_name(roms[i].name, sn, sizeof sn);
+            for (size_t d = 0; d < sizeof demo_skip_default / sizeof *demo_skip_default; d++)
+                if (strcmp(sn, demo_skip_default[d]) == 0) demo_skip[i] = true;
+        }
     }
     uint8_t m = 0;
     muted = nvs_get_u8(h, "mute", &m) == ESP_OK && m;
@@ -133,7 +141,7 @@ static void demo_set_skip(int idx, bool skip)
     char k[16]; nvs_key_for(k, 'd', roms[idx].name);
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    if (skip) nvs_set_u8(h, k, 1); else nvs_erase_key(h, k);
+    nvs_set_u8(h, k, skip);   /* explicit 0 so a default exclusion can be turned back on */
     nvs_commit(h); nvs_close(h);
 }
 
