@@ -35,7 +35,7 @@ static const char *TAG = "NESTOR";
 #define SRAM_SIZE    0x2000
 #define DEMO_AFTER_US   30000000LL   /* no controller for this long -> demo mode */
 #ifndef DEMO_SECONDS
-#define DEMO_SECONDS    30           /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=300) */
+#define DEMO_SECONDS    60           /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=300) */
 #endif
 #define DEMO_BOT        0            /* 1: demo_bot() feeds input; 0: games run their own attract modes */
 
