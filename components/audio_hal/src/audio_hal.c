@@ -91,19 +91,25 @@ void audio_init(void)
                       .dout = PIN_I2S_DOUT, .din = PIN_I2S_DIN },
     };
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(i2s_tx, &std));
-    /* start with ~3 descriptors of silence queued so the first frames don't underrun
-     * and there is headroom for a slow frame (BLE, flash cache miss) */
+    ESP_LOGI(TAG, "ES8311 + I2S at %d Hz", AUDIO_SAMPLE_RATE);
+}
+
+/* The channel starts on the first submit, primed with ~3 descriptors of silence: no
+ * underruns while the game loads, and headroom for a slow frame (BLE, cache miss). */
+static void audio_start(void)
+{
     static const int16_t silence[AUDIO_DMA_FRAME_NUM * 3];
     size_t loaded = 0;
     i2s_channel_preload_data(i2s_tx, silence, sizeof silence, &loaded);
     bytes_written = loaded;
     ESP_ERROR_CHECK(i2s_channel_enable(i2s_tx));
-    ESP_LOGI(TAG, "ES8311 + I2S at %d Hz", AUDIO_SAMPLE_RATE);
 }
 
 bool audio_submit(const int16_t *samples, size_t n)
 {
+    static bool started;
     if (!i2s_tx) return false;
+    if (!started) { audio_start(); started = true; }
     static const int16_t silence[AUDIO_DMA_FRAME_NUM];
     size_t written = 0;
     const void *src = samples;

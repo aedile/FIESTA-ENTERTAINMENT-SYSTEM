@@ -20,6 +20,7 @@ extern uint16_t ui_pal[256];   /* RGB565, byte-swapped for the panel */
 
 void ui_init(void);            /* allocates the framebuffer, sets the UI palette entries */
 void ui_clear(uint8_t colour);
+void ui_fill(int x, int y, int w, int h, uint8_t colour);
 void ui_text(int x, int y, const char *s, uint8_t colour);
 void ui_text_center(int y, const char *s, uint8_t colour);
 void ui_present(void);         /* push the framebuffer to the panel and wait */

@@ -1,12 +1,8 @@
 idf_component_register(
-    SRCS "main.c" "ui.c"
+    SRCS "main.c" "ui.c" "saves.c"
     INCLUDE_DIRS "."
     REQUIRES display audio_hal ble_pad nofrendo driver esp_timer nvs_flash esp_partition
 )
-
-if(DEFINED ROM_PICK)
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE ROM_PICK=${ROM_PICK})
-endif()
 
 # Pack ROMS/ into the 'roms' partition image and flash it with `idf.py flash`.
 # CONFIGURE_DEPENDS: dropping a new ROM into the folder is picked up by the next build.

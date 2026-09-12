@@ -1,16 +1,19 @@
 /*
  * NESTOR - NES emulator for the Waveshare ESP32-C6-LCD-1.69
  *
- * M4: nofrendo core running the first mapper-0 ROM from the roms partition,
- * PRG/CHR executed straight out of memory-mapped flash. Video, pad and APU audio
- * through PELLETINO's ES8311/I2S path; the I2S DMA queue paces emulation.
+ * Boot -> controller screen (until a pad connects) -> ROM picker -> game.
+ * MENU (Y / shoulder) in a game: resume, save/load state, back to picker, controller screen.
+ * PRG/CHR ROM are executed straight out of memory-mapped flash; battery RAM and
+ * save states live in the 'saves' NVS partition.
  */
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_partition.h"
+#include "esp_rom_crc.h"
 #include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +21,7 @@
 #include "audio_hal.h"
 #include "ble_pad.h"
 #include "ui.h"
+#include "saves.h"
 #include "nes/nes.h"
 #include "palettes.h"
 
@@ -25,6 +29,7 @@ static const char *TAG = "NESTOR";
 
 #define PIN_BAT_EN   GPIO_NUM_15   /* the medal's battery rail: hold it up or we brown out */
 #define PIN_BTN_BOOT GPIO_NUM_9    /* active low */
+#define SRAM_SIZE    0x2000
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
 typedef struct __attribute__((packed)) { char name[48]; uint32_t off, size; } rom_entry_t;
@@ -50,10 +55,190 @@ static void roms_init(void)
                  (roms_base[roms[i].off + 6] >> 4) | (roms_base[roms[i].off + 7] & 0xF0));
 }
 
+/* "Super Mario Bros. (Japan, USA)" -> "Super Mario Bros." */
+static void short_name(const char *in, char *out, size_t n)
+{
+    const char *p = strstr(in, " (");
+    size_t len = p ? (size_t)(p - in) : strlen(in);
+    if (len >= n) len = n - 1;
+    memcpy(out, in, len);
+    out[len] = 0;
+}
+
 static void log_heap(const char *when)
 {
     ESP_LOGI(TAG, "heap %s: free %lu, largest block %u, min ever %lu", when, esp_get_free_heap_size(),
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), esp_get_minimum_free_heap_size());
+}
+
+/* ---- input: the BLE pad, plus keys typed into the serial monitor for bench testing
+ * (w/a/s/d = d-pad, j = A, k = B, q = start, e = select, m = menu) ---- */
+static int64_t serial_last = -10000000;
+static bool serial_active(void) { return esp_timer_get_time() - serial_last < 5000000; }   /* bench driving: screens accept keys as if a pad were connected */
+
+static uint32_t serial_pad(void)
+{
+    static const char keys[] = "wsadjkqem";
+    static const uint32_t bits[] = { PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_A, PAD_B, PAD_START, PAD_SELECT, PAD_MENU };
+    static int64_t held_until[9];
+    int64_t now = esp_timer_get_time();
+    uint8_t c;
+    while (usb_serial_jtag_read_bytes(&c, 1, 0) == 1) {
+        const char *k = memchr(keys, c, sizeof keys - 1);
+        if (k) { held_until[k - keys] = now + 120000; serial_last = now; }
+    }
+    uint32_t m = 0;
+    for (int i = 0; i < 9; i++) if (held_until[i] > now) m |= bits[i];
+    return m;
+}
+
+static uint32_t pad_now(void) { return ble_pad_buttons() | serial_pad(); }
+
+/* newly pressed bits, with key repeat on up/down for lists */
+static uint32_t pad_edges(void)
+{
+    static uint32_t prev;
+    static int64_t repeat_at;
+    int64_t now = esp_timer_get_time();
+    uint32_t cur = pad_now(), e = cur & ~prev;
+    if (cur & (PAD_UP | PAD_DOWN)) {
+        if (e & (PAD_UP | PAD_DOWN)) repeat_at = now + 400000;
+        else if (now > repeat_at) { e |= cur & (PAD_UP | PAD_DOWN); repeat_at = now + 100000; }
+    }
+    prev = cur;
+    return e;
+}
+
+static bool boot_button_edge(void)
+{
+    static bool was;
+    bool down = gpio_get_level(PIN_BTN_BOOT) == 0;
+    bool e = down && !was;
+    was = down;
+    return e;
+}
+
+/* ---- controller screen ---- */
+static void controller_screen(bool boot)
+{
+    int64_t deadline = esp_timer_get_time() + ((boot && ble_pad_has_saved()) ? 5000000 : 0);
+    bool any = false;
+    int sel = 0;
+    ble_pad_state_t shown = -1;
+    int64_t last_draw = 0;
+    pad_edges();   /* swallow the press that brought us here */
+    for (;;) {
+        ble_pad_state_t st = ble_pad_state();
+        bool connected = st == PAD_CONNECTED;
+        if (!any && !connected && esp_timer_get_time() > deadline) { any = true; ble_pad_scan_any(true); }
+        if (connected && any) { any = false; ble_pad_scan_any(false); }   /* reconnects go to this pad only */
+        if (boot_button_edge()) { ble_pad_forget(); any = true; ble_pad_scan_any(true); }
+
+        uint32_t e = pad_edges();
+        if (connected || serial_active()) {
+            if (e & PAD_UP) sel = 0;
+            if (e & PAD_DOWN) sel = 1;
+            if ((e & PAD_A) && sel == 1) { ble_pad_forget(); any = true; ble_pad_scan_any(true); sel = 0; }
+            if (((e & PAD_A) && sel == 0) || (e & (PAD_B | PAD_MENU))) return;
+        }
+        if (boot && connected) return;
+
+        if (st != shown || esp_timer_get_time() - last_draw > 250000) {
+            shown = st; last_draw = esp_timer_get_time();
+            ui_clear(UI_BLACK);
+            ui_text_center(16, "CONTROLLER", UI_YELLOW);
+            const char *s = "Idle"; uint8_t c = UI_GREY;
+            if (st == PAD_SCANNING) { s = "Scanning..."; c = UI_WHITE; }
+            if (st == PAD_CONNECTING) { s = "Connecting..."; c = UI_YELLOW; }
+            if (connected) { s = "Connected"; c = UI_GREEN; }
+            ui_text(24, 52, "Status:", UI_GREY); ui_text(96, 52, s, c);
+            ui_text(24, 68, "Found:", UI_GREY);  ui_text(96, 68, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
+            ui_text(24, 84, "Saved:", UI_GREY);  ui_text(96, 84, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
+            char adv[32]; snprintf(adv, sizeof adv, "%lu adverts seen", ble_pad_adv_seen());
+            ui_text(24, 100, adv, UI_GREY);
+            if (!connected) {
+                ui_text_center(136, "Put the controller in", UI_WHITE);
+                ui_text_center(148, "pairing mode", UI_WHITE);
+            } else {
+                ui_text(40, 136, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(56, 136, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
+                ui_text(40, 152, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(56, 152, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
+            }
+            ui_text_center(216, "BOOT button: forget saved", UI_GREY);
+            ui_present();
+        }
+        vTaskDelay(pdMS_TO_TICKS(16));
+    }
+}
+
+/* ---- ROM picker ---- */
+#define PICK_ROWS 12
+static int picker(int sel)
+{
+    bool has_save[64];
+    for (int i = 0; i < nroms && i < 64; i++) has_save[i] = saves_has_sram(roms[i].name);
+    int top = 0;
+    bool dirty = true;
+    pad_edges();
+    for (;;) {
+        uint32_t e = pad_edges();
+        if ((e & PAD_UP) && sel > 0) { sel--; dirty = true; }
+        if ((e & PAD_DOWN) && sel < nroms - 1) { sel++; dirty = true; }
+        if (e & PAD_A) return sel;
+        if (e & PAD_MENU) { controller_screen(false); dirty = true; }
+        if (ble_pad_state() != PAD_CONNECTED && !serial_active()) { controller_screen(false); dirty = true; }
+        if (dirty) {
+            dirty = false;
+            if (sel < top) top = sel;
+            if (sel >= top + PICK_ROWS) top = sel - PICK_ROWS + 1;
+            ui_clear(UI_BLACK);
+            ui_text(16, 8, "NESTOR", UI_YELLOW);
+            ui_text(160, 8, "* = battery save", UI_GREY);
+            for (int r = 0; r < PICK_ROWS && top + r < nroms; r++) {
+                int i = top + r, y = 32 + r * 16;
+                char name[29]; short_name(roms[i].name, name, sizeof name);
+                ui_text(8, y, i == sel ? ">" : " ", UI_YELLOW);
+                ui_text(24, y, name, i == sel ? UI_YELLOW : UI_WHITE);
+                if (has_save[i]) ui_text(240, y, "*", UI_GREEN);
+            }
+            if (nroms == 0) ui_text_center(100, "No ROMs in partition", UI_RED);
+            ui_text_center(228, "A: play   MENU: controller", UI_GREY);
+            ui_present();
+        }
+        vTaskDelay(pdMS_TO_TICKS(16));
+    }
+}
+
+/* ---- in-game menu ---- */
+enum { MENU_RESUME, MENU_SAVE, MENU_LOAD, MENU_PICKER, MENU_CONTROLLER, MENU_COUNT };
+static int game_menu(const char *rom)
+{
+    static const char *items[MENU_COUNT] = { "Resume", "Save state", "Load state", "Return to picker", "Controller" };
+    bool have_state = saves_has_state(rom);
+    int sel = 0;
+    bool dirty = true;
+    pad_edges();
+    for (;;) {
+        uint32_t e = pad_edges();
+        if ((e & PAD_UP) && sel > 0) { sel--; dirty = true; }
+        if ((e & PAD_DOWN) && sel < MENU_COUNT - 1) { sel++; dirty = true; }
+        if (e & (PAD_B | PAD_MENU)) return MENU_RESUME;
+        if ((e & PAD_A) && !(sel == MENU_LOAD && !have_state)) return sel;
+        if (dirty) {
+            dirty = false;
+            ui_fill(56, 56, 144, 120, UI_BLACK);
+            ui_fill(56, 56, 144, 2, UI_WHITE); ui_fill(56, 174, 144, 2, UI_WHITE);
+            ui_fill(56, 56, 2, 120, UI_WHITE); ui_fill(198, 56, 2, 120, UI_WHITE);
+            ui_text(72, 68, "MENU", UI_YELLOW);
+            for (int i = 0; i < MENU_COUNT; i++) {
+                uint8_t c = i == sel ? UI_YELLOW : UI_WHITE;
+                if (i == MENU_LOAD && !have_state) c = UI_GREY;
+                ui_text(72, 92 + i * 14, i == sel ? ">" : " ", UI_YELLOW);
+                ui_text(88, 92 + i * 14, items[i], c);
+            }
+            ui_present();
+        }
+        vTaskDelay(pdMS_TO_TICKS(16));
+    }
 }
 
 /* ---- frame output: each 16-line strip is converted and queued for DMA as soon as
@@ -91,54 +276,63 @@ static int nes_buttons(uint32_t b)
     return n;
 }
 
-void app_main(void)
+/* battery RAM: written to NVS when its CRC has changed and then stayed put for a second */
+static uint32_t sram_saved_crc, sram_last_crc;
+static void sram_flush(nes_t *nes, const char *rom, bool force)
 {
-    gpio_config_t bat = { .pin_bit_mask = 1ULL << PIN_BAT_EN, .mode = GPIO_MODE_OUTPUT };
-    gpio_config(&bat);
-    gpio_set_level(PIN_BAT_EN, 1);
-    gpio_config_t btn = { .pin_bit_mask = 1ULL << PIN_BTN_BOOT, .mode = GPIO_MODE_INPUT, .pull_up_en = 1 };
-    gpio_config(&btn);
-
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+    if (!nes->cart->battery) return;
+    uint32_t crc = esp_rom_crc32_le(0, nes->cart->prg_ram, SRAM_SIZE);
+    if (crc != sram_saved_crc && (force || crc == sram_last_crc)) {
+        if (saves_store_sram(rom, nes->cart->prg_ram, SRAM_SIZE)) sram_saved_crc = crc;
+        ESP_LOGI(TAG, "battery RAM saved");
     }
-    ESP_ERROR_CHECK(ret);
+    sram_last_crc = crc;
+}
 
-    display_init();
-    ui_init();
-    audio_init();
-    ble_pad_init();
-    ble_pad_scan_any(true);
-    roms_init();
-    log_heap("after display+BLE");
-
-    /* M3: first mapper-0 ROM in the partition (or build with -DROM_PICK=n to test another) */
-    int pick = -1;
-#ifdef ROM_PICK
-    pick = ROM_PICK;
-#endif
-    for (int i = 0; i < nroms && pick < 0; i++)
-        if (((roms_base[roms[i].off + 6] >> 4) | (roms_base[roms[i].off + 7] & 0xF0)) == 0) pick = i;
-    if (pick < 0) { ESP_LOGE(TAG, "no mapper-0 ROM in partition"); return; }
-
-    nes_t *nes = nes_init(SYS_NES_NTSC, AUDIO_SAMPLE_RATE, false, NULL);
+static void run_game(int idx)
+{
+    const char *rom = roms[idx].name;
+    static nes_t *nes;
+    if (nes) nes_shutdown();
+    nes = nes_init(SYS_NES_NTSC, AUDIO_SAMPLE_RATE, false, NULL);
     assert(nes);
-    int rc = nes_insertcart(rom_loadmem((uint8 *)roms_base + roms[pick].off, roms[pick].size));
-    if (rc < 0) { ESP_LOGE(TAG, "nes_insertcart failed: %d", rc); return; }
+    int rc = nes_insertcart(rom_loadmem((uint8 *)roms_base + roms[idx].off, roms[idx].size));
+    if (rc < 0) {
+        ESP_LOGE(TAG, "nes_insertcart failed: %d", rc);
+        ui_clear(UI_BLACK); ui_text_center(112, "Unsupported ROM", UI_RED); ui_present();
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        return;
+    }
     nes->strip_func = push_strip;
     nes_setvidbuf(ui_fb);
     build_palette(4);   /* palettes.h index 4 = PVM, retro-go default */
-    ESP_LOGI(TAG, "running %s", roms[pick].name);
+    if (nes->cart->battery) {
+        if (saves_load_sram(rom, nes->cart->prg_ram, SRAM_SIZE)) ESP_LOGI(TAG, "battery RAM loaded");
+        sram_saved_crc = sram_last_crc = esp_rom_crc32_le(0, nes->cart->prg_ram, SRAM_SIZE);
+    }
+    ESP_LOGI(TAG, "running %s", rom);
     log_heap("with cart loaded");
 
     int frames = 0, skipped = 0;
     bool draw = true;
     int64_t t_report = esp_timer_get_time(), emu_us = 0, wait_us = 0;
+    uint32_t prev = 0, underruns0 = audio_get_underrun_count();
     for (;;) {
         int64_t f0 = esp_timer_get_time();
-        input_update(0, nes_buttons(ble_pad_buttons()));
+        uint32_t b = pad_now();
+        if ((b & PAD_MENU) && !(prev & PAD_MENU)) {
+            sram_flush(nes, rom, true);
+            int a = game_menu(rom);
+            if (a == MENU_SAVE) saves_save_state(rom);
+            if (a == MENU_LOAD) saves_load_state(rom);
+            if (a == MENU_CONTROLLER) controller_screen(false);
+            if (a == MENU_PICKER) return;
+            prev = pad_now();
+            underruns0 = audio_get_underrun_count();   /* menus don't feed the DAC; don't count that */
+            continue;
+        }
+        prev = b;
+        input_update(0, nes_buttons(b));
         int64_t p0 = push_us;
         nes_emulate(draw);
         int64_t f1 = esp_timer_get_time();
@@ -153,11 +347,46 @@ void app_main(void)
          * the next frame only emulates (no PPU drawing, no push) so the queue refills.
          * Audio never gaps; the picture drops frames only as fast as the game is slow. */
         draw = audio_queued_samples() >= 3 * AUDIO_DMA_FRAME_NUM;
-        if (f1 - t_report >= 1000000) {
+        if (frames % 60 == 0) sram_flush(nes, rom, false);
+        if (f1 - t_report >= 5000000) {
             ESP_LOGI(TAG, "%d fps (%d skipped) | per frame: emu %lld us, push %lld us, audio wait %lld us | underruns %lu | heap %lu",
-                     frames, skipped, emu_us / frames, push_us / frames, wait_us / frames, audio_get_underrun_count(),
-                     esp_get_free_heap_size());
+                     frames / 5, skipped / 5, emu_us / frames, push_us / frames, wait_us / frames,
+                     audio_get_underrun_count() - underruns0, esp_get_free_heap_size());
             frames = skipped = 0; emu_us = push_us = wait_us = 0; t_report = f1;
+            underruns0 = audio_get_underrun_count();
         }
+    }
+}
+
+void app_main(void)
+{
+    gpio_config_t bat = { .pin_bit_mask = 1ULL << PIN_BAT_EN, .mode = GPIO_MODE_OUTPUT };
+    gpio_config(&bat);
+    gpio_set_level(PIN_BAT_EN, 1);
+    gpio_config_t btn = { .pin_bit_mask = 1ULL << PIN_BTN_BOOT, .mode = GPIO_MODE_INPUT, .pull_up_en = 1 };
+    gpio_config(&btn);
+    usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    usb_serial_jtag_driver_install(&usb);
+
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    display_init();
+    ui_init();
+    audio_init();
+    ble_pad_init();
+    roms_init();
+    saves_init();
+    log_heap("after display+audio+BLE");
+
+    controller_screen(true);
+    int sel = 0;
+    for (;;) {
+        sel = picker(sel);
+        run_game(sel);
     }
 }

@@ -23,5 +23,6 @@
 
 #pragma once
 
-int state_load(const char *fn);
-int state_save(const char *fn);
+#include <stdio.h>
+int state_load(FILE *file);
+int state_save(FILE *file);
