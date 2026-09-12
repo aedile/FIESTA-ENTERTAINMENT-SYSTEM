@@ -33,6 +33,7 @@ static bool playing = false;
 // Ugly hack to access from the gui until we make a nice
 // GUI running on the NES in here.
 int nsf_current_song = 0;
+uint32_t nsf_play_calls = 0;   /* NESTOR: play-routine calls, to verify the 60 Hz rate */
 
 static void setup_bank(int bank, int value)
 {
@@ -59,7 +60,7 @@ static void setup_song(int song)
 #if SYNC_TO_VBLANK
         0xAD, 0x02, 0x20,                                           // LDA $2002
         0x29, 0x80,                                                 // AND #$80
-        0x10, 0x03,                                                 // BPL #$03
+        0x10, 0x06,                                                 // BPL #$06 (NESTOR: skip the sync write too, so it counts real play calls)
 #endif
         0x20, header->play_addr & 0xFF, header->play_addr >> 8,     // JSR $play_addr
         0x8E, 0x00, 0x58,                                           // STX $5800
@@ -118,6 +119,7 @@ static void map_write(uint32 address, uint8 value)
     }
     else if (address == 0x5800) // playback sync
     {
+        nsf_play_calls++;
 #if !SYNC_TO_VBLANK
         nes6502_burn(header->ntsc_speed * (NES_CPU_CLOCK_NTSC / 1000000.f) - 214);
 #endif
