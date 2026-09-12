@@ -67,6 +67,8 @@ uint32_t medal_poll(void)
     return ev;
 }
 
+static int last_mv;
+
 int medal_battery_percent(void)
 {
     static int64_t last;
@@ -79,13 +81,15 @@ int medal_battery_percent(void)
             if (!cali || adc_cali_raw_to_voltage(cali, raw, &mv) != ESP_OK) mv = raw * 3300 / 4095;
             /* ponytail: divider factor 3 is what Waveshare's own battery example uses for this board;
              * tune here if the reading is off, and the 3.3-4.2 V linear map is a guess at a curve */
-            int bat_mv = mv * 3;
-            int p = (bat_mv - 3300) * 100 / (4200 - 3300);
+            last_mv = mv * 3;
+            int p = (last_mv - 3300) * 100 / (4200 - 3300);
             pct = p < 0 ? 0 : p > 100 ? 100 : p;
         }
     }
     return pct < 0 ? 0 : pct;
 }
+
+int medal_battery_mv(void) { medal_battery_percent(); return last_mv; }
 
 void medal_power_off(void)
 {
