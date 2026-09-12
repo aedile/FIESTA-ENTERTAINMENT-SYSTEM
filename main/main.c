@@ -1,69 +1,61 @@
 /*
  * NESTOR - NES emulator for the Waveshare ESP32-C6-LCD-1.69
  *
- * M1: bring the display up through PELLETINO's driver (rotated to landscape) and push a test pattern
- * through the real frame path: 8-bit indexed framebuffer -> RGB565 LUT -> DMA strips.
+ * M2: BLE gamepad pairing. Controller sync screen, button states on serial,
+ * saved controller reconnects on boot.
  */
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/gpio.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "display.h"
-#include "font8x8.h"
+#include "ble_pad.h"
+#include "ui.h"
 
 static const char *TAG = "NESTOR";
 
-/* nofrendo's frame layout: 8 px of overdraw either side of the 256 px line */
-#define FB_PITCH  272
-#define FB_LINES  240
-#define FB_XOFF   8         /* skip the left overdraw; the full 256 px line is shown */
+#define PIN_BAT_EN   GPIO_NUM_15   /* the medal's battery rail: hold it up or we brown out */
+#define PIN_BTN_BOOT GPIO_NUM_9    /* active low */
 
-#define PIN_BAT_EN GPIO_NUM_15   /* the medal's battery rail: hold it up or we brown out */
-
-static uint8_t *fb;
-static uint16_t pal[256];
-
-static uint16_t rgb565_swapped(uint8_t r, uint8_t g, uint8_t b)
+static void log_heap(const char *when)
 {
-    uint16_t c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-    return (c >> 8) | (c << 8);
+    ESP_LOGI(TAG, "heap %s: free %lu, largest block %u, min ever %lu", when, esp_get_free_heap_size(),
+             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), esp_get_minimum_free_heap_size());
 }
 
-static void draw_text(int x, int y, const char *s, uint8_t colour)
+static void draw_sync_screen(void)
 {
-    for (; *s; s++, x += 8) {
-        if (*s < 32 || *s > 126) continue;
-        const uint8_t *g = font8x8[*s - 32];
-        for (int r = 0; r < 8; r++)
-            for (int c = 0; c < 8; c++)
-                if (g[r] & (0x80 >> c)) fb[(y + r) * FB_PITCH + FB_XOFF + x + c] = colour;
+    ui_clear(UI_BLACK);
+    ui_text_center(24, "CONTROLLER", UI_YELLOW);
+    const char *st = "";
+    uint8_t c = UI_GREY;
+    switch (ble_pad_state()) {
+    case PAD_IDLE:       st = "Idle"; break;
+    case PAD_SCANNING:   st = "Scanning..."; c = UI_WHITE; break;
+    case PAD_CONNECTING: st = "Connecting..."; c = UI_YELLOW; break;
+    case PAD_CONNECTED:  st = "Connected"; c = UI_GREEN; break;
     }
-}
-
-static void draw_test_pattern(int frame)
-{
-    /* 8 colour bars across, a 0..255 gradient below, a moving marker so motion is visible */
-    for (int y = 0; y < 120; y++)
-        for (int x = 0; x < 256; x++)
-            fb[y * FB_PITCH + FB_XOFF + x] = 1 + x / 32;
-    for (int y = 120; y < 200; y++)
-        for (int x = 0; x < 256; x++)
-            fb[y * FB_PITCH + FB_XOFF + x] = 16 + x * 239 / 255;
-    for (int y = 200; y < 240; y++)
-        memset(&fb[y * FB_PITCH + FB_XOFF], 0, 256);
-    int mx = (frame * 2) % 248;
-    for (int y = 204; y < 212; y++)
-        memset(&fb[y * FB_PITCH + FB_XOFF + mx], 9, 8);
-    /* 1 px white frame so cropping errors show */
-    for (int x = 0; x < 256; x++) fb[FB_XOFF + x] = fb[239 * FB_PITCH + FB_XOFF + x] = 9;
-    for (int y = 0; y < 240; y++) fb[y * FB_PITCH + FB_XOFF] = fb[y * FB_PITCH + FB_XOFF + 255] = 9;
-    char line[40];
-    snprintf(line, sizeof line, "NESTOR M1  frame %d", frame);
-    draw_text(8, 216, line, 9);
-    draw_text(8, 228, "256x240 landscape, 8bpp->565 DMA", 10);
+    ui_text(16, 64, "Status:", UI_GREY);
+    ui_text(88, 64, st, c);
+    ui_text(16, 80, "Found:", UI_GREY);
+    ui_text(88, 80, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
+    ui_text(16, 96, "Saved:", UI_GREY);
+    ui_text(88, 96, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
+    char adv[32];
+    snprintf(adv, sizeof adv, "%lu adverts seen", ble_pad_adv_seen());
+    ui_text(16, 112, adv, UI_GREY);
+    if (ble_pad_state() != PAD_CONNECTED) {
+        ui_text_center(144, "Put the controller in", UI_WHITE);
+        ui_text_center(156, "pairing mode", UI_WHITE);
+    } else {
+        ui_text_center(144, "Press buttons - see serial", UI_WHITE);
+    }
+    ui_text_center(208, "BOOT button: forget saved", UI_GREY);
+    ui_present();
 }
 
 void app_main(void)
@@ -71,37 +63,58 @@ void app_main(void)
     gpio_config_t bat = { .pin_bit_mask = 1ULL << PIN_BAT_EN, .mode = GPIO_MODE_OUTPUT };
     gpio_config(&bat);
     gpio_set_level(PIN_BAT_EN, 1);
+    gpio_config_t btn = { .pin_bit_mask = 1ULL << PIN_BTN_BOOT, .mode = GPIO_MODE_INPUT, .pull_up_en = 1 };
+    gpio_config(&btn);
 
-    ESP_LOGI(TAG, "free heap at boot: %lu", esp_get_free_heap_size());
+    log_heap("at boot");
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
     display_init();
+    ui_init();
+    log_heap("after display+fb");
+    ble_pad_init();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    log_heap("after BLE up");
 
-    fb = calloc(FB_PITCH * FB_LINES, 1);
-    assert(fb);
-
-    /* test palette: 0 black, 1..8 bars, 9 white, 10 yellow, 16..255 grey ramp */
-    static const uint8_t bars[8][3] = {{255,255,255},{255,255,0},{0,255,255},{0,255,0},
-                                       {255,0,255},{255,0,0},{0,0,255},{64,64,64}};
-    for (int i = 0; i < 8; i++) pal[1 + i] = rgb565_swapped(bars[i][0], bars[i][1], bars[i][2]);
-    pal[9] = rgb565_swapped(255, 255, 255);
-    pal[10] = rgb565_swapped(255, 220, 0);
-    for (int i = 16; i < 256; i++) { uint8_t v = (i - 16) * 255 / 239; pal[i] = rgb565_swapped(v, v, v); }
-
-    ESP_LOGI(TAG, "free heap after display+fb: %lu", esp_get_free_heap_size());
-
-    int frame = 0;
-    int64_t t0 = esp_timer_get_time(), push_us = 0;
+    /* Give a saved controller a few seconds to come back before opening pairing to anyone. */
+    int64_t deadline = esp_timer_get_time() + (ble_pad_has_saved() ? 5000000 : 0);
+    bool any = false, boot_was_down = false;
+    uint32_t last_buttons = 0, last_raw = 0;
     for (;;) {
-        draw_test_pattern(frame);
-        int64_t a = esp_timer_get_time();
-        display_push_indexed(fb + 0, FB_PITCH, pal);
-        display_wait_done();
-        push_us += esp_timer_get_time() - a;
-        frame++;
-        int64_t now = esp_timer_get_time();
-        if (now - t0 >= 1000000) {
-            ESP_LOGI(TAG, "%d fps, push %lld us/frame (SPI %d MHz)", frame, push_us / frame, LCD_SPI_CLOCK / 1000000);
-            frame = 0; push_us = 0; t0 = now;
+        if (!any && ble_pad_state() != PAD_CONNECTED && esp_timer_get_time() > deadline) {
+            any = true;
+            ble_pad_scan_any(true);
         }
-        vTaskDelay(1);  /* let idle run; ~60 Hz cap is not the point here */
+        bool boot_down = gpio_get_level(PIN_BTN_BOOT) == 0;
+        if (boot_down && !boot_was_down) { ble_pad_forget(); any = true; ble_pad_scan_any(true); }
+        boot_was_down = boot_down;
+
+        uint32_t b = ble_pad_buttons(), raw = ble_pad_raw();
+        if (b != last_buttons || raw != last_raw) {
+            ESP_LOGI(TAG, "PAD raw=%04lx  %s%s%s%s%s%s%s%s%s", raw,
+                     b & PAD_UP ? "UP " : "", b & PAD_DOWN ? "DOWN " : "", b & PAD_LEFT ? "LEFT " : "",
+                     b & PAD_RIGHT ? "RIGHT " : "", b & PAD_A ? "A " : "", b & PAD_B ? "B " : "",
+                     b & PAD_START ? "START " : "", b & PAD_SELECT ? "SELECT " : "", b & PAD_MENU ? "MENU " : "");
+            last_buttons = b; last_raw = raw;
+        }
+        static ble_pad_state_t shown = -1;
+        static int64_t last_draw;
+        if (ble_pad_state() != shown || esp_timer_get_time() - last_draw > 500000) {
+            if (ble_pad_state() != shown && ble_pad_state() == PAD_CONNECTED) log_heap("connected");
+            shown = ble_pad_state();
+            last_draw = esp_timer_get_time();
+            draw_sync_screen();
+            static uint32_t last_adv; static int tick;
+            if (++tick % 10 == 0 && ble_pad_adv_seen() != last_adv) {
+                last_adv = ble_pad_adv_seen();
+                ESP_LOGI(TAG, "scanner: %lu adverts seen, state %d", last_adv, ble_pad_state());
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(16));
     }
 }
