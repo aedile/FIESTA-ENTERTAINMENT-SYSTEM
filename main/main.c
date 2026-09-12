@@ -44,7 +44,7 @@ static const char *TAG = "NESTOR";
 #endif
 #define BACKLIGHT_PLAY  153          /* 60 %, as PELLETINO */
 #define BACKLIGHT_DEMO  76           /* 30 % */
-#define MUSIC_TRACK     5            /* DuckTales NSF: 5 = Moon Surface (The Moon), per the rip's m3u */
+#define MUSIC_TRACK     7            /* DuckTales NSF (joshw rip of the release): 7 = The Moon */
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
 typedef struct __attribute__((packed)) {

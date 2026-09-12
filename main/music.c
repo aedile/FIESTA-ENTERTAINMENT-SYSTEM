@@ -14,6 +14,7 @@ static bool playing;
 extern const uint8_t nsf_start[] asm("_binary_menu_nsf_start");
 extern const uint8_t nsf_end[] asm("_binary_menu_nsf_end");
 void nsf_play_song(int song);   /* mappers/map031.c */
+extern uint32_t nsf_play_calls;
 #endif
 
 void music_start(int track)
@@ -39,9 +40,11 @@ void music_tick(void)
     static int64_t report, emu_us; static int frames; static uint32_t underruns0;
     emu_us += t1 - t0; frames++;
     if (t1 - report > 5000000) {
-        if (report) ESP_LOGI(TAG, "%d frames: %lld us/frame emulation, underruns %lu, heap %lu", frames, emu_us / frames,
+        static uint32_t calls0;
+        if (report) ESP_LOGI(TAG, "%d frames, %lu play calls in %lld ms: %lld us/frame emulation, underruns %lu, heap %lu", frames,
+                             nsf_play_calls - calls0, (t1 - report) / 1000, emu_us / frames,
                              audio_get_underrun_count() - underruns0, esp_get_free_heap_size());
-        report = t1; frames = 0; emu_us = 0; underruns0 = audio_get_underrun_count();
+        report = t1; frames = 0; emu_us = 0; underruns0 = audio_get_underrun_count(); calls0 = nsf_play_calls;
     }
 }
 
