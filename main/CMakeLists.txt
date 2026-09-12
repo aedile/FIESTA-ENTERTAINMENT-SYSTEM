@@ -4,6 +4,10 @@ idf_component_register(
     REQUIRES display audio_hal ble_pad nofrendo driver esp_timer nvs_flash esp_partition
 )
 
+if(DEFINED DEMO_SECONDS)   # bench: idf.py -DDEMO_SECONDS=20 build
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE DEMO_SECONDS=${DEMO_SECONDS})
+endif()
+
 # Pack ROMS/ into the 'roms' partition image and flash it with `idf.py flash`.
 # CONFIGURE_DEPENDS: dropping a new ROM into the folder is picked up by the next build.
 set(ROMS_DIR "${CMAKE_SOURCE_DIR}/ROMS")
