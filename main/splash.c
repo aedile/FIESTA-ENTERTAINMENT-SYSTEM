@@ -183,53 +183,64 @@ static void speed_lines(int frame, int dir)
     }
 }
 
-/* one cut: frames 0..len-1. Cover slides in from `from` (0 right, 1 left, 2 bottom) with a zoom punch,
- * the word slams into a letterbox band. Returns false when nothing was drawn (no cover). */
-static void cut(int t, int len, const char *game, const char *word, int from, uint8_t word_colour)
+/* one cut: the cover slides in from `from` (0 right, 1 left, 2 bottom) with a slow zoom punch;
+ * the word rides a letterbox band at word_x (4x letters, so ENTERTAINMENT scrolls through). */
+static void cut(int t, const char *game, int from, uint8_t colour, const char *word, int word_x)
 {
     int w, h;
     const uint8_t *art = splash_cover(game, &w, &h);
     ui_clear(UI_BLACK);
     if (t < 2) { ui_fill(L, 0, R - L, FB_LINES, UI_WHITE); return; }   /* the flash */
     speed_lines(t, from == 1 ? 1 : -1);
-    /* slide: 6 frames from off-screen, then a zoom from 3/2 to 7/4 over the rest */
-    int slide = t < 8 ? (8 - t) * 40 : 0;
-    int num = 6 + (t > 8 ? (t - 8) / 6 : 0), den = 4;   /* 1.5x -> up to ~2x */
+    int slide = t < 10 ? (10 - t) * 30 : 0;
+    int num = 6 + (t > 10 ? (t - 10) / 14 : 0), den = 4;   /* 1.5x, creeping up to 2x */
     if (num > 8) num = 8;
     int cw = w * num / den, ch = h * num / den;
     int x = CX - cw / 2 + (from == 0 ? slide : from == 1 ? -slide : 0);
-    int y = 100 - ch / 2 + (from == 2 ? slide : 0);
+    int y = 92 - ch / 2 + (from == 2 ? slide : 0);
     if (art) ui_bitmap(x, y, art, w, h, num, den);
     else ui_fill(x, y, cw, ch, UI_GREY);
-    /* letterbox band with the word, punching in from the side */
-    ui_fill(L, 168, R - L, 44, UI_BLACK);
-    ui_fill(L, 168, R - L, 2, word_colour); ui_fill(L, 210, R - L, 2, word_colour);
-    int ww = 8 * 3 * (int)strlen(word);
-    int wx = CX - ww / 2, punch = t < 6 ? (6 - t) * 30 * (from == 1 ? -1 : 1) : 0;
-    ui_text_scaled(wx + punch + 2, 180 + 2, word, CUBE(1,0,1), 3);
-    ui_text_scaled(wx + punch, 180, word, word_colour, 3);
+    ui_fill(L, 162, R - L, 52, UI_BLACK);
+    ui_fill(L, 162, R - L, 2, colour); ui_fill(L, 212, R - L, 2, colour);
+    ui_text_scaled(word_x + 3, 172 + 3, word, CUBE(1,0,1), 4);
+    ui_text_scaled(word_x, 172, word, colour, 4);
 }
+
+#define CUT_FRAMES 90
 
 static bool cold_open(void)
 {
-    /* FIESTA races right-to-left, 4x letters, over speed lines */
-    for (int t = 0; t < 80; t++) {
+    /* FIESTA races right-to-left in 5x letters over speed lines */
+    for (int t = 0; t < 130; t++) {
         ui_clear(UI_BLACK);
         speed_lines(t, -1);
-        int x = R + 40 - t * 7;   /* 192 px wide word: fully across in ~70 frames */
-        ui_text_scaled(x + 3, 106 + 3, "FIESTA", CUBE(2,0,1), 4);
-        ui_text_scaled(x, 106, "FIESTA", t & 4 ? CUBE(5,5,0) : CUBE(5,1,3), 4);
+        int x = R + 20 - t * 4;   /* 240 px wide word */
+        ui_text_scaled(x + 4, 100 + 4, "FIESTA", CUBE(2,0,1), 5);
+        ui_text_scaled(x, 100, "FIESTA", (t >> 2) & 1 ? CUBE(5,5,0) : CUBE(5,1,3), 5);
         music_tick_hook((t & 1) ? NULL : ui_line_push);
         if (splash_skip_requested()) return false;
     }
-    static const struct { const char *game, *word; int from; uint8_t colour; } cuts[3] = {
-        { "Super Mario Bros.", "ENTER", 0, CUBE(5,0,0) },
-        { "Legend of Zelda, The", "TAINMENT", 1, CUBE(1,5,1) },
-        { "Metroid", "SYSTEM", 2, CUBE(5,3,0) },
+    /* ENTERTAINMENT (416 px at 4x) scrolls through the band across the Mario and Zelda cuts:
+     * ENTER shows under Mario, TAINMENT under Link. SYSTEM punches in under Samus. */
+    static const struct { const char *game; int from; uint8_t colour; } cuts[3] = {
+        { "Super Mario Bros.", 0, CUBE(5,0,0) },
+        { "Legend of Zelda, The", 1, CUBE(1,5,1) },
+        { "Metroid", 2, CUBE(5,3,0) },
     };
     for (int c = 0; c < 3; c++)
-        for (int t = 0; t < 42; t++) {
-            cut(t, 42, cuts[c].game, cuts[c].word, cuts[c].from, cuts[c].colour);
+        for (int t = 0; t < CUT_FRAMES; t++) {
+            const char *word = c < 2 ? "ENTERTAINMENT" : "SYSTEM";
+            int wx;
+            if (c < 2) {
+                /* slide in fast over the first 20 frames to park ENTER (cut 0) or TAINMENT (cut 1)
+                 * under the cover, then crawl left so the word keeps moving */
+                static const int target[2] = { 48, 48 - 5 * 32 }, start[2] = { R + 8, 48 - 35 };
+                wx = target[c] + (t < 20 ? (start[c] - target[c]) * (20 - t) / 20 : -(t - 20) / 2);
+            } else {
+                int punch = t < 10 ? (10 - t) * 24 : 0;
+                wx = CX - 192 / 2 + punch;
+            }
+            cut(t, cuts[c].game, cuts[c].from, cuts[c].colour, word, wx);
             music_tick_hook((t & 1) ? NULL : ui_line_push);
             if (splash_skip_requested()) return false;
         }

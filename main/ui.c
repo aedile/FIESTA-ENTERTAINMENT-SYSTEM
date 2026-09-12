@@ -69,15 +69,17 @@ void ui_palette_cube(void)
 void ui_bitmap(int x, int y, const uint8_t *px, int w, int h, int num, int den)
 {
     int ow = w * num / den, oh = h * num / den;
+    /* clip once, map output columns to source columns once: no per-pixel division */
+    int ox0 = x < 0 ? -x : 0, ox1 = x + ow > 256 ? 256 - x : ow;
+    if (ox1 <= ox0) return;
+    static uint16_t xmap[512];
+    for (int ox = ox0; ox < ox1; ox++) xmap[ox] = ox * den / num;
     for (int oy = 0; oy < oh; oy++) {
         int sy = y + oy;
         if (sy < 0 || sy >= FB_LINES) continue;
         const uint8_t *row = px + (oy * den / num) * w;
-        uint8_t *dst = ui_fb + sy * FB_PITCH + FB_XOFF;
-        for (int ox = 0; ox < ow; ox++) {
-            int sx = x + ox;
-            if (sx >= 0 && sx < 256) dst[sx] = row[ox * den / num];
-        }
+        uint8_t *dst = ui_fb + sy * FB_PITCH + FB_XOFF + x;
+        for (int ox = ox0; ox < ox1; ox++) dst[ox] = row[xmap[ox]];
     }
 }
 
