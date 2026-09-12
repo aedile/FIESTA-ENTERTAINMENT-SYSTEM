@@ -86,3 +86,22 @@ void ui_frame(int x, int y, int w, int h, uint8_t colour)
     ui_fill(x, y, w, 1, colour); ui_fill(x, y + h - 1, w, 1, colour);
     ui_fill(x, y, 1, h, colour); ui_fill(x + w - 1, y, 1, h, colour);
 }
+
+void ui_text_scaled(int x, int y, const char *s, uint8_t colour, int scale)
+{
+    for (; *s; s++, x += 8 * scale) {
+        if (*s < 32 || *s > 126) continue;
+        const uint8_t *g = font8x8[*s - 32];
+        for (int r = 0; r < 8; r++)
+            for (int c = 0; c < 8; c++)
+                if (g[r] & (0x80 >> c))
+                    for (int dy = 0; dy < scale; dy++) {
+                        int yy = y + r * scale + dy;
+                        if (yy < 0 || yy >= FB_LINES) continue;
+                        for (int dx = 0; dx < scale; dx++) {
+                            int xx = x + c * scale + dx;
+                            if (xx >= 0 && xx < 256) ui_fb[yy * FB_PITCH + FB_XOFF + xx] = colour;
+                        }
+                    }
+    }
+}

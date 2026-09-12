@@ -50,6 +50,8 @@ void nes_emulate(bool draw)
 
         if (draw && nes.strip_func && (nes.scanline & 15) == 15 && nes.scanline < NES_SCREEN_HEIGHT)
             nes.strip_func(nes.vidbuf, nes.scanline - 15, 16);
+        if (nes.line_func)
+            nes.line_func(nes.scanline);
 
         if (nes.scanline == 241)
         {

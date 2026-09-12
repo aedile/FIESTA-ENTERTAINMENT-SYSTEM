@@ -30,6 +30,7 @@
 #include "saves.h"
 #include "medal.h"
 #include "music.h"
+#include "splash.h"
 #include "core.h"
 #include "nes/nes.h"
 #include "palettes.h"
@@ -47,6 +48,8 @@ static const char *TAG = "NESTOR";
 #ifndef DEFAULT_PORTRAIT
 #define DEFAULT_PORTRAIT 1           /* medals are mounted portrait; START in the picker flips it (kept in NVS) */
 #endif
+#define UI_LEFT         24           /* the medal's frame hides the leftmost columns: keep left-aligned text inside this */
+#define UI_RIGHT        232
 #define MUSIC_TRACK     7            /* DuckTales NSF (joshw rip of the release): 7 = The Moon */
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
@@ -245,6 +248,8 @@ static uint32_t medal_events(void)
     return ev;
 }
 
+bool splash_skip_requested(void) { return pad_edges() || (medal_events() & (BTN_BOOT_SHORT | BTN_PWR_SHORT)); }
+
 /* ---- overlays ---- */
 static void toast(const char *line1, const char *line2)
 {
@@ -307,9 +312,9 @@ static bool controller_screen(bool boot)
             if (st == PAD_SCANNING) { s = "Scanning..."; c = UI_WHITE; }
             if (st == PAD_CONNECTING) { s = "Connecting..."; c = UI_YELLOW; }
             if (connected) { s = "Connected"; c = UI_GREEN; }
-            ui_text(24, 52, "Status:", UI_GREY); ui_text(96, 52, s, c);
-            ui_text(24, 68, "Found:", UI_GREY);  ui_text(96, 68, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
-            ui_text(24, 84, "Saved:", UI_GREY);  ui_text(96, 84, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
+            ui_text(UI_LEFT + 8, 52, "Status:", UI_GREY); ui_text(104, 52, s, c);
+            ui_text(UI_LEFT + 8, 68, "Found:", UI_GREY);  ui_text(104, 68, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
+            ui_text(UI_LEFT + 8, 84, "Saved:", UI_GREY);  ui_text(104, 84, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
             if (!connected) {
                 ui_text_center(120, "Put the controller in", UI_WHITE);
                 ui_text_center(132, "pairing mode", UI_WHITE);
@@ -369,12 +374,12 @@ static int picker(int sel)
         if (dirty) {
             dirty = false;
             ui_clear(UI_BLACK);
-            ui_text(16, 6, "NESTOR", UI_YELLOW);
+            ui_text(UI_LEFT, 6, "F.E.S.", UI_YELLOW);
             char bat[8]; snprintf(bat, sizeof bat, "%d%%", medal_battery_percent());
-            ui_text(240 - 8 * strlen(bat), 6, bat, UI_GREY);
+            ui_text(UI_RIGHT - 8 * strlen(bat), 6, bat, UI_GREY);
             if (nroms == 0) { ui_text_center(100, "No ROMs in partition", UI_RED); ui_present(); continue; }
-            if (sel > 0) draw_cover(sel - 1, 40, 96, 1, 2);
-            if (sel + 1 < nroms) draw_cover(sel + 1, 216, 96, 1, 2);
+            if (sel > 0) draw_cover(sel - 1, 48, 96, 1, 2);
+            if (sel + 1 < nroms) draw_cover(sel + 1, 208, 96, 1, 2);
             draw_cover(sel, 128, 92, 1, 1);
             ui_frame(128 - 50, 92 - 69, 100, 138, sel == demo_lock ? UI_YELLOW : UI_WHITE);
             char name[29]; short_name(roms[sel].name, name, sizeof name);
@@ -624,6 +629,8 @@ void app_main(void)
     display_set_orientation(portrait);
     log_heap("after display+audio+BLE");
 
+    music_start(MUSIC_TRACK);
+    splash_run();
     bool have_pad = controller_screen(true);
     int sel = 0;
     for (;;) {
