@@ -171,13 +171,82 @@ static void title(int frame)
 
 extern bool splash_skip_requested(void);   /* main.c: any pad or medal button */
 
+/* ---- the cold open: FIESTA races past, then three hard cuts to box art, one word each ---- */
+static void speed_lines(int frame, int dir)
+{
+    for (int i = 0; i < 28; i++) {
+        uint32_t h = (uint32_t)(i + 3) * 2654435761u;
+        int y = (h >> 8) % FB_LINES, len = 30 + (h >> 20) % 60;
+        int x = ((h >> 4) % 400 + frame * (10 + i % 5) * dir) % 400 - 80;
+        uint8_t c = i % 3 == 0 ? UI_WHITE : i % 3 == 1 ? CUBE(3,3,4) : CUBE(1,1,2);
+        ui_fill(x, y, len, 1, c);
+    }
+}
+
+/* one cut: frames 0..len-1. Cover slides in from `from` (0 right, 1 left, 2 bottom) with a zoom punch,
+ * the word slams into a letterbox band. Returns false when nothing was drawn (no cover). */
+static void cut(int t, int len, const char *game, const char *word, int from, uint8_t word_colour)
+{
+    int w, h;
+    const uint8_t *art = splash_cover(game, &w, &h);
+    ui_clear(UI_BLACK);
+    if (t < 2) { ui_fill(L, 0, R - L, FB_LINES, UI_WHITE); return; }   /* the flash */
+    speed_lines(t, from == 1 ? 1 : -1);
+    /* slide: 6 frames from off-screen, then a zoom from 3/2 to 7/4 over the rest */
+    int slide = t < 8 ? (8 - t) * 40 : 0;
+    int num = 6 + (t > 8 ? (t - 8) / 6 : 0), den = 4;   /* 1.5x -> up to ~2x */
+    if (num > 8) num = 8;
+    int cw = w * num / den, ch = h * num / den;
+    int x = CX - cw / 2 + (from == 0 ? slide : from == 1 ? -slide : 0);
+    int y = 100 - ch / 2 + (from == 2 ? slide : 0);
+    if (art) ui_bitmap(x, y, art, w, h, num, den);
+    else ui_fill(x, y, cw, ch, UI_GREY);
+    /* letterbox band with the word, punching in from the side */
+    ui_fill(L, 168, R - L, 44, UI_BLACK);
+    ui_fill(L, 168, R - L, 2, word_colour); ui_fill(L, 210, R - L, 2, word_colour);
+    int ww = 8 * 3 * (int)strlen(word);
+    int wx = CX - ww / 2, punch = t < 6 ? (6 - t) * 30 * (from == 1 ? -1 : 1) : 0;
+    ui_text_scaled(wx + punch + 2, 180 + 2, word, CUBE(1,0,1), 3);
+    ui_text_scaled(wx + punch, 180, word, word_colour, 3);
+}
+
+static bool cold_open(void)
+{
+    /* FIESTA races right-to-left, 4x letters, over speed lines */
+    for (int t = 0; t < 80; t++) {
+        ui_clear(UI_BLACK);
+        speed_lines(t, -1);
+        int x = R + 40 - t * 7;   /* 192 px wide word: fully across in ~70 frames */
+        ui_text_scaled(x + 3, 106 + 3, "FIESTA", CUBE(2,0,1), 4);
+        ui_text_scaled(x, 106, "FIESTA", t & 4 ? CUBE(5,5,0) : CUBE(5,1,3), 4);
+        music_tick_hook((t & 1) ? NULL : ui_line_push);
+        if (splash_skip_requested()) return false;
+    }
+    static const struct { const char *game, *word; int from; uint8_t colour; } cuts[3] = {
+        { "Super Mario Bros.", "ENTER", 0, CUBE(5,0,0) },
+        { "Legend of Zelda, The", "TAINMENT", 1, CUBE(1,5,1) },
+        { "Metroid", "SYSTEM", 2, CUBE(5,3,0) },
+    };
+    for (int c = 0; c < 3; c++)
+        for (int t = 0; t < 42; t++) {
+            cut(t, 42, cuts[c].game, cuts[c].word, cuts[c].from, cuts[c].colour);
+            music_tick_hook((t & 1) ? NULL : ui_line_push);
+            if (splash_skip_requested()) return false;
+        }
+    /* flash into the scene */
+    ui_fill(L, 0, R - L, FB_LINES, UI_WHITE);
+    music_tick_hook(ui_line_push);
+    return true;
+}
+
 void splash_run(void)
 {
     ui_palette_cube();
     memset(sparks, 0, sizeof sparks);
     memset(rockets, 0, sizeof rockets);
     rnd_state = (uint32_t)esp_timer_get_time();
-    for (int frame = 0; frame < SPLASH_FRAMES; frame++) {
+    if (!cold_open()) { display_wait_done(); return; }
+    for (int frame = 30; frame < SPLASH_FRAMES; frame++) {
         ui_clear(UI_BLACK);
         stars(frame);
         skyline();
