@@ -242,8 +242,9 @@ static bool cold_open(void)
                 int crawl = (tt - 20) / 3;
                 wx = target[c] + (tt < 20 ? (start - target[c]) * (20 - tt) / 20 : -crawl);
             } else {
-                int punch = tt < 10 ? (10 - tt) * 24 : 0;
-                wx = CX - 240 / 2 + punch;
+                /* SYSTEM scrolls too: in from the right, parks, then the same slow crawl */
+                int target = 8, start = R + 8, crawl = (tt - 20) / 3;
+                wx = target + (tt < 20 ? (start - target) * (20 - tt) / 20 : -crawl);
             }
             cut(t, cuts[c].game, cuts[c].from, cuts[c].colour, word, wx);
             music_tick_hook((t & 1) ? NULL : ui_line_push);
