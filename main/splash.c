@@ -5,8 +5,8 @@
 #include "display.h"
 #include "ui.h"
 #include "music.h"
+#include "festive.h"
 
-#define CUBE(r, g, b) ((uint8_t)((r) * 30 + (g) * 5 + (b)))   /* 6x6x5 palette from ui_palette_cube */
 #define SPLASH_FRAMES (60 * 20)
 #define GROUND 204
 
@@ -19,12 +19,7 @@ static uint32_t rnd_state = 12345;
 static uint32_t rnd(void) { rnd_state = rnd_state * 1664525u + 1013904223u; return rnd_state >> 8; }
 static int rndn(int n) { return rnd() % n; }
 
-static const uint8_t fiesta_colours[6] = { CUBE(5,1,3), CUBE(0,5,4), CUBE(5,5,0), CUBE(1,5,1), CUBE(5,3,0), CUBE(3,0,4) };
-
-static void px(int x, int y, uint8_t c)
-{
-    if (x >= L && x < R && y >= 0 && y < FB_LINES) ui_fb[y * FB_PITCH + FB_XOFF + x] = c;
-}
+#define px festive_px
 
 /* ---- fireworks ---- */
 typedef struct { int16_t x, y, vx, vy; uint8_t life, colour; } spark_t;   /* positions in 1/16 px */
@@ -146,25 +141,6 @@ static void stars(int frame)
     }
 }
 
-static void papel_picado(int frame)
-{
-    static const int8_t sway[8] = { 0, 1, 2, 1, 0, -1, -2, -1 };
-    for (int x = L; x < R; x++) {
-        int d = x - CX;
-        px(x, 6 + (d * d) / 1400, UI_GREY);   /* the string sags in the middle */
-    }
-    for (int i = 0; i < 8; i++) {
-        int x = L + 6 + i * 30 + sway[((frame >> 3) + i) & 7];
-        int d = x + 9 - CX, y = 7 + (d * d) / 1400;
-        uint8_t c = fiesta_colours[i % 6];
-        ui_fill(x, y, 18, 16, c);
-        for (int k = 0; k < 4; k++) ui_fill(x + 8, y + 3 + k * 3, 2, 1, UI_BLACK);   /* punched pattern */
-        ui_fill(x + 5, y + 6, 8, 1, UI_BLACK); ui_fill(x + 5, y + 10, 8, 1, UI_BLACK);
-        ui_fill(x, y + 13, 18, 3, c);
-        for (int k = 0; k < 18; k += 3) px(x + k, y + 16, c);   /* scalloped edge */
-    }
-}
-
 /* letters drop in one by one with a bounce */
 static void title(int frame)
 {
@@ -193,13 +169,6 @@ static void title(int frame)
     }
 }
 
-/* the frame is pushed strip by strip while the music core runs its scanlines */
-static void push_line(int scanline)
-{
-    if ((scanline & 15) == 15 && scanline < FB_LINES)
-        display_push_strip(ui_fb + (scanline - 15) * FB_PITCH + FB_XOFF + ui_crop(), FB_PITCH, scanline - 15, ui_pal);
-}
-
 extern bool splash_skip_requested(void);   /* main.c: any pad or medal button */
 
 void splash_run(void)
@@ -213,12 +182,12 @@ void splash_run(void)
         stars(frame);
         skyline();
         fireworks(frame);
-        papel_picado(frame);
+        festive_papel_picado(frame);
         title(frame);
         beacon(frame);
         if (frame > SPLASH_FRAMES - 90 && (frame & 16)) ui_text_center(224, "press any button", UI_GREY);
         /* simulate at 60 Hz, present at 30: a full-frame push every music frame overran the audio budget */
-        music_tick_hook((frame & 1) ? NULL : push_line);
+        music_tick_hook((frame & 1) ? NULL : ui_line_push);
         if (splash_skip_requested()) break;
     }
     display_wait_done();

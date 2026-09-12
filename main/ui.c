@@ -105,3 +105,9 @@ void ui_text_scaled(int x, int y, const char *s, uint8_t colour, int scale)
                     }
     }
 }
+
+void ui_line_push(int scanline)
+{
+    if ((scanline & 15) == 15 && scanline < FB_LINES)
+        display_push_strip(ui_fb + (scanline - 15) * FB_PITCH + FB_XOFF + ui_crop(), FB_PITCH, scanline - 15, ui_pal);
+}
