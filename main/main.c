@@ -52,6 +52,7 @@ static const char *TAG = "NESTOR";
 #endif
 #define UI_LEFT         24           /* the medal's frame hides the leftmost columns: keep left-aligned text inside this */
 #define UI_RIGHT        232
+#define CX_TEXT(str, scale) (128 - (int)(sizeof(str) - 1) * 4 * (scale))   /* x that centres a literal at 8*scale px per glyph */
 #define MUSIC_TRACK     7            /* DuckTales NSF (joshw rip of the release): 7 = The Moon */
 
 /* ---- roms partition: image written by tools/pack_roms.py ---- */
@@ -262,6 +263,21 @@ const uint8_t *splash_cover(const char *sn, int *w, int *h)
     return NULL;
 }
 
+/* ---- battery: a warning under 15 %, and power-off once a plausible reading sits under 3 % for a minute.
+ * The plausibility window (2.9-3.4 V) keeps a mis-scaled ADC from ever switching the medal off. ---- */
+#define BATTERY_WARN_PCT 15
+static const char *battery_warning(void)
+{
+    static int64_t low_since;
+    int pct = medal_battery_percent(), mv = medal_battery_mv();
+    bool plausible = mv > 2900 && mv < 3400;
+    if (pct < 3 && plausible) {
+        if (!low_since) low_since = esp_timer_get_time();
+        if (esp_timer_get_time() - low_since > 60000000) { ESP_LOGW(TAG, "battery %d mV: powering off", mv); medal_power_off(); }
+    } else low_since = 0;
+    return pct < BATTERY_WARN_PCT ? "LOW BATTERY" : NULL;
+}
+
 /* ---- overlays ---- */
 static void toast(const char *line1, const char *line2)
 {
@@ -390,7 +406,7 @@ static int picker(int sel)
             festive_papel_picado(frame);
             ui_text(UI_LEFT, 38, "F.E.S.", UI_YELLOW);
             char bat[8]; snprintf(bat, sizeof bat, "%d%%", medal_battery_percent());
-            ui_text(UI_LEFT + 64, 38, bat, UI_GREY);
+            if (!(battery_warning() && (frame & 32))) ui_text(UI_LEFT + 64, 38, bat, UI_GREY);
             if (nroms == 0) { ui_text_center(100, "No ROMs in partition", UI_RED); music_tick_hook(ui_line_push); continue; }
             if (sel > 0) draw_cover(sel - 1, 48, 116, 1, 2);
             if (sel + 1 < nroms) draw_cover(sel + 1, 208, 116, 1, 2);
@@ -406,6 +422,8 @@ static int picker(int sel)
             if (sel == demo_lock) strcat(tags, "demo locked  ");
             if (muted) strcat(tags, "muted");
             ui_text_center(203, tags, has_save[sel] ? UI_GREEN : UI_GREY);
+            const char *warn = battery_warning();
+            if (warn && (frame & 32)) ui_text(UI_LEFT + 64, 38, warn, UI_RED);
             char pos[24]; snprintf(pos, sizeof pos, "%d/%d", sel + 1, nroms);
             ui_text(UI_RIGHT - 8 * strlen(pos), 38, pos, UI_GREY);
             ui_text_center(216, "A play  B demo  SEL mute", UI_GREY);
@@ -514,14 +532,23 @@ static game_result_t run_game_inner(int idx, bool demo)
     music_stop();
     ui_palette_cube();
     if (demo) {
+        /* title card: cover, confetti, flags and a 2.5 s sting of the Moon theme */
         char name[29]; short_name(rom, name, sizeof name);
-        ui_clear(UI_BLACK);
-        draw_cover(idx, 128, 84, 1, 1);
-        ui_text_center(164, name, UI_YELLOW);
-        ui_text_center(184, demo_lock == idx ? "demo (locked)" : "demo", UI_GREY);
-        ui_text_center(216, "press any pad button to play", UI_GREY);
-        ui_present();
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        music_start(MUSIC_TRACK);
+        for (int frame = 0; frame < 150; frame++) {
+            ui_clear(UI_BLACK);
+            festive_confetti(frame);
+            festive_papel_picado(frame);
+            draw_cover(idx, 128, 104, 1, 1);
+            ui_frame(78, 35, 100, 138, fiesta_colours[(frame >> 4) % 6]);
+            ui_text_center(180, name, UI_YELLOW);
+            ui_text_center(196, demo_lock == idx ? "demo (locked)" : "demo", UI_GREY);
+            const char *warn = battery_warning();
+            ui_text_center(216, warn && (frame & 32) ? warn : "press any pad button to play", warn && (frame & 32) ? UI_RED : UI_GREY);
+            music_tick_hook((frame & 1) ? NULL : ui_line_push);
+            if (pad_edges()) { music_stop(); return GAME_DEMO_EXIT; }
+        }
+        music_stop();
     }
     nes_t *nes = nes_getptr();
     if (!core_load(roms_base + roms[idx].off, roms[idx].size)) {
@@ -607,13 +634,39 @@ static game_result_t run_game_inner(int idx, bool demo)
     }
 }
 
+/* attract card at the top of each demo cycle: what this thing is and how many games it carries */
+static bool cycle_card(void)
+{
+    char games[32]; snprintf(games, sizeof games, "%d GAMES ON BOARD", nroms);
+    music_start(MUSIC_TRACK);
+    for (int frame = 0; frame < 300; frame++) {
+        ui_clear(UI_BLACK);
+        festive_confetti(frame);
+        festive_papel_picado(frame);
+        ui_text_scaled(CX_TEXT("FIESTA", 3), 44, "FIESTA", (frame >> 3) & 1 ? CUBE(5,5,0) : CUBE(5,1,3), 3);
+        ui_text_center(74, "ENTERTAINMENT SYSTEM", UI_WHITE);
+        ui_text_center(90, "SAN ANTONIO 2027", UI_YELLOW);
+        festive_dancers(frame, 160);
+        ui_text_center(176, games, (frame >> 4) & 1 ? UI_WHITE : UI_GREEN);
+        ui_text_center(196, "grab a controller to play", UI_GREY);
+        ui_text_center(216, "or just watch the show", UI_GREY);
+        music_tick_hook((frame & 1) ? NULL : ui_line_push);
+        if (pad_edges()) { music_stop(); return true; }
+    }
+    music_stop();
+    return false;
+}
+
 /* every game (or the locked one) until someone presses a pad button */
 static void demo_loop(void)
 {
     serial_demo = false;
     if (!nroms) { vTaskDelay(pdMS_TO_TICKS(1000)); return; }
-    int i = demo_lock >= 0 ? demo_lock : demo_next(nroms - 1);
+    int first = demo_next(nroms - 1);
+    int i = demo_lock >= 0 ? demo_lock : first;
+    display_set_backlight(BACKLIGHT_DEMO);
     for (;;) {
+        if (demo_lock < 0 && i == first && cycle_card()) break;
         if (run_game(i, true) == GAME_DEMO_EXIT) break;
         i = demo_next(i);
         if (demo_lock >= 0) demo_set_lock(i);   /* PWR "next" while locked moves the lock along */

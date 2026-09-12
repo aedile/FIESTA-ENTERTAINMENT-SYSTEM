@@ -276,7 +276,7 @@ void splash_run(void)
         festive_papel_picado(frame);
         title(frame);
         beacon(frame);
-        if (frame > SPLASH_FRAMES - 90 && (frame & 16)) ui_text_center(224, "press any button", UI_GREY);
+        if (frame > SPLASH_FRAMES - 390 && (frame & 16)) ui_text_center(224, "press any button", UI_GREY);   /* from ~13.5 s in */
         /* simulate at 60 Hz, present at 30: a full-frame push every music frame overran the audio budget */
         music_tick_hook((frame & 1) ? NULL : ui_line_push);
         if (splash_skip_requested()) break;
