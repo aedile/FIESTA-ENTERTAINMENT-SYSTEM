@@ -7,7 +7,7 @@
 #include "music.h"
 
 #define CUBE(r, g, b) ((uint8_t)((r) * 30 + (g) * 5 + (b)))   /* 6x6x5 palette from ui_palette_cube */
-#define SPLASH_FRAMES (60 * 30)
+#define SPLASH_FRAMES (60 * 20)
 #define GROUND 204
 
 /* visible window in portrait is columns 8..247 of the 256-wide frame */
@@ -86,16 +86,33 @@ static void skyline(void)
             for (int x = bld[i][0] + 2; x < bld[i][0] + bld[i][1] - 2; x += 5)
                 if (((x * 7 + y * 13) / 5) % 3) px(x, y, win);
     }
-    /* Tower of the Americas: shaft, tophouse, spire */
-    uint8_t tw = CUBE(1,1,2);
-    ui_fill(CX - 3, 96, 6, GROUND - 96, tw);
-    ui_fill(CX - 20, 84, 40, 4, tw);
-    ui_fill(CX - 24, 88, 48, 8, tw);
-    ui_fill(CX - 20, 96, 40, 3, tw);
-    ui_fill(CX - 1, 62, 2, 22, tw);
-    for (int x = CX - 21; x < CX + 21; x += 6) px(x, 91, win);
+    /* Tower of the Americas: the tan concrete shaft, flared at the base, a tall tophouse
+     * (restaurant + observation levels with lit windows under a wide crown), and the spire */
+    uint8_t tan = CUBE(4,3,2), tan_dk = CUBE(3,2,1), tan_lt = CUBE(5,4,3), glass = CUBE(0,0,2);
+    ui_fill(CX - 7, 92, 14, GROUND - 92, tan);
+    ui_fill(CX - 7, 92, 3, GROUND - 92, tan_lt);          /* lit side */
+    ui_fill(CX + 4, 92, 3, GROUND - 92, tan_dk);          /* shaded side */
+    for (int y = GROUND - 24; y < GROUND; y++) {          /* base flare */
+        int w = (y - (GROUND - 24)) / 3;
+        ui_fill(CX - 7 - w, y, 14 + 2 * w, 1, tan);
+        px(CX - 7 - w, y, tan_lt); px(CX + 6 + w, y, tan_dk);
+    }
+    ui_fill(CX - 26, 56, 52, 5, tan_lt);                  /* crown */
+    ui_fill(CX - 24, 61, 48, 3, tan);
+    ui_fill(CX - 22, 64, 44, 8, glass);                   /* restaurant level */
+    for (int x = CX - 20; x < CX + 20; x += 4) ui_fill(x, 66, 2, 4, win);
+    ui_fill(CX - 22, 72, 44, 3, tan);
+    ui_fill(CX - 20, 75, 40, 7, glass);                   /* observation level */
+    for (int x = CX - 18; x < CX + 18; x += 4) ui_fill(x, 77, 2, 3, win);
+    ui_fill(CX - 20, 82, 40, 3, tan);
+    for (int y = 85; y < 92; y++) ui_fill(CX - 17 + (y - 85) * 3 / 2, y, 34 - (y - 85) * 3, 1, tan_dk);   /* underside taper */
+    ui_fill(CX - 1, 30, 2, 26, tan_lt);                   /* spire */
+    ui_fill(CX - 2, 44, 4, 2, tan);
     ui_fill(L, GROUND, R - L, FB_LINES - GROUND, CUBE(0,0,1));
 }
+
+/* aircraft beacon on the spire tip, drawn last so nothing covers it */
+static void beacon(int frame) { if ((frame / 30) & 1) { px(CX - 1, 29, CUBE(5,0,0)); px(CX, 29, CUBE(5,0,0)); } }
 
 /* a proper night sky: ~100 stars in three brightness tiers, each twinkling on its own
  * phase, the brightest flaring into 4-point sparkles, and a shooting star now and then */
@@ -198,6 +215,7 @@ void splash_run(void)
         fireworks(frame);
         papel_picado(frame);
         title(frame);
+        beacon(frame);
         if (frame > SPLASH_FRAMES - 90 && (frame & 16)) ui_text_center(224, "press any button", UI_GREY);
         /* simulate at 60 Hz, present at 30: a full-frame push every music frame overran the audio budget */
         music_tick_hook((frame & 1) ? NULL : push_line);
