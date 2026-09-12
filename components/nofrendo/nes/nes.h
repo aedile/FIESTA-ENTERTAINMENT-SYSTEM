@@ -113,6 +113,8 @@ typedef struct nes_s
     /* NESTOR: called every 16 rendered scanlines so the port can start pushing that
        strip while the next ones are still being emulated (overlaps display DMA with CPU) */
     void (*strip_func)(uint8 *, int y0, int rows);
+    /* NESTOR: called after every scanline regardless of draw, for pacing work under the music */
+    void (*line_func)(int scanline);
 } nes_t;
 
 nes_t *nes_getptr(void);

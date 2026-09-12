@@ -29,12 +29,20 @@ void music_start(int track)
 #endif
 }
 
-void music_tick(void)
+void music_tick(void) { music_tick_hook(NULL); }
+
+void music_tick_hook(void (*line)(int scanline))
 {
-    if (!playing) { vTaskDelay(pdMS_TO_TICKS(16)); return; }
+    if (!playing) {
+        if (line) for (int y = 0; y < 262; y++) line(y);
+        vTaskDelay(pdMS_TO_TICKS(16));
+        return;
+    }
     nes_t *nes = nes_getptr();
+    nes->line_func = line;
     int64_t t0 = esp_timer_get_time();
     nes_emulate(false);
+    nes->line_func = NULL;
     int64_t t1 = esp_timer_get_time();
     audio_submit(nes->apu->buffer, nes->apu->samples_per_frame);
     static int64_t report, emu_us; static int frames; static uint32_t underruns0;

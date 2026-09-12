@@ -23,6 +23,7 @@ void ui_clear(uint8_t colour);
 void ui_fill(int x, int y, int w, int h, uint8_t colour);
 void ui_text(int x, int y, const char *s, uint8_t colour);
 void ui_text_center(int y, const char *s, uint8_t colour);
+void ui_text_scaled(int x, int y, const char *s, uint8_t colour, int scale);   /* 8*scale px glyphs, clipped */
 void ui_present(void);         /* push the framebuffer to the panel and wait */
 int ui_crop(void);             /* pixels hidden on each side of the 256-wide frame: 0 landscape, 8 portrait */
 void ui_palette_cube(void);    /* entries 0..179 = the 6x6x5 RGB cube the box art is quantised to */

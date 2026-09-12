@@ -1,0 +1,183 @@
+#include "splash.h"
+#include <string.h>
+#include <stdlib.h>
+#include "esp_timer.h"
+#include "display.h"
+#include "ui.h"
+#include "music.h"
+
+#define CUBE(r, g, b) ((uint8_t)((r) * 30 + (g) * 5 + (b)))   /* 6x6x5 palette from ui_palette_cube */
+#define SPLASH_FRAMES (60 * 11)
+#define GROUND 204
+
+/* visible window in portrait is columns 8..247 of the 256-wide frame */
+#define L 8
+#define R 248
+#define CX 128
+
+static uint32_t rnd_state = 12345;
+static uint32_t rnd(void) { rnd_state = rnd_state * 1664525u + 1013904223u; return rnd_state >> 8; }
+static int rndn(int n) { return rnd() % n; }
+
+static const uint8_t fiesta_colours[6] = { CUBE(5,1,3), CUBE(0,5,4), CUBE(5,5,0), CUBE(1,5,1), CUBE(5,3,0), CUBE(3,0,4) };
+
+static void px(int x, int y, uint8_t c)
+{
+    if (x >= L && x < R && y >= 0 && y < FB_LINES) ui_fb[y * FB_PITCH + FB_XOFF + x] = c;
+}
+
+/* ---- fireworks ---- */
+typedef struct { int16_t x, y, vx, vy; uint8_t life, colour; } spark_t;   /* positions in 1/16 px */
+#define SPARKS 160
+static spark_t sparks[SPARKS];
+typedef struct { int16_t x, y, vy; uint8_t colour; bool live; } rocket_t;
+static rocket_t rockets[3];
+
+static void burst(int x, int y, uint8_t colour)
+{
+    int n = 0;
+    for (int i = 0; i < SPARKS && n < 64; i++) {
+        if (sparks[i].life) continue;
+        int a = rndn(64), sp = 12 + rndn(30);
+        /* crude sin/cos from a 16-entry table */
+        static const int8_t tbl[16] = { 0, 12, 23, 30, 32, 30, 23, 12, 0, -12, -23, -30, -32, -30, -23, -12 };
+        sparks[i] = (spark_t){ x * 16, y * 16, tbl[(a + 4) & 15] * sp / 32, tbl[a & 15] * sp / 32, 55 + rndn(35), colour };
+        n++;
+    }
+}
+
+static void fireworks(int frame)
+{
+    if (frame > 20 && rndn(30) == 0)
+        for (int i = 0; i < 3; i++) if (!rockets[i].live) {
+            rockets[i] = (rocket_t){ (L + 30 + rndn(R - L - 60)) * 16, GROUND * 16, -(58 + rndn(16)), fiesta_colours[rndn(6)], true };
+            break;
+        }
+    for (int i = 0; i < 3; i++) {
+        rocket_t *r = &rockets[i];
+        if (!r->live) continue;
+        r->y += r->vy; r->vy += 1;
+        px(r->x / 16, r->y / 16, UI_WHITE); px(r->x / 16, r->y / 16 + 1, UI_GREY);
+        if (r->vy >= -4) { r->live = false; burst(r->x / 16, r->y / 16, r->colour); }
+    }
+    for (int i = 0; i < SPARKS; i++) {
+        spark_t *s = &sparks[i];
+        if (!s->life) continue;
+        s->x += s->vx; s->y += s->vy; s->vy += 1; s->life--;
+        s->vx -= s->vx / 24; s->vy -= s->vy / 24;   /* air drag: bursts stay rounder */
+        uint8_t c = s->colour;
+        if (s->life < 10) c = UI_GREY;
+        else if (s->life < 22) c = CUBE((s->colour / 30) / 2, ((s->colour / 5) % 6) / 2, (s->colour % 5) / 2);
+        else if (s->life > 70 || (s->life & 4)) c = s->colour;
+        int sx = s->x / 16, sy = s->y / 16;
+        px(sx, sy, c); if (s->life > 22) { px(sx + 1, sy, c); px(sx, sy + 1, c); px(sx + 1, sy + 1, c); }
+        if (s->y / 16 >= GROUND) s->life = 0;
+    }
+}
+
+/* ---- scene ---- */
+static void skyline(void)
+{
+    static const uint8_t bld[][3] = { {8,30,26},{38,18,40},{56,24,34},{78,14,48},{170,20,44},{190,26,30},{216,16,38},{232,16,24} };
+    uint8_t dark = CUBE(0,0,1), win = CUBE(5,5,2);
+    for (size_t i = 0; i < sizeof bld / sizeof *bld; i++) {
+        ui_fill(bld[i][0], GROUND - bld[i][2], bld[i][1], bld[i][2], dark);
+        for (int y = GROUND - bld[i][2] + 3; y < GROUND - 2; y += 5)
+            for (int x = bld[i][0] + 2; x < bld[i][0] + bld[i][1] - 2; x += 5)
+                if (((x * 7 + y * 13) / 5) % 3) px(x, y, win);
+    }
+    /* Tower of the Americas: shaft, tophouse, spire */
+    uint8_t tw = CUBE(1,1,2);
+    ui_fill(CX - 3, 96, 6, GROUND - 96, tw);
+    ui_fill(CX - 20, 84, 40, 4, tw);
+    ui_fill(CX - 24, 88, 48, 8, tw);
+    ui_fill(CX - 20, 96, 40, 3, tw);
+    ui_fill(CX - 1, 62, 2, 22, tw);
+    for (int x = CX - 21; x < CX + 21; x += 6) px(x, 91, win);
+    ui_fill(L, GROUND, R - L, FB_LINES - GROUND, CUBE(0,0,1));
+}
+
+static void stars(int frame)
+{
+    for (int i = 0; i < 40; i++) {
+        int x = L + (i * 61) % (R - L), y = (i * 37) % 80;
+        px(x, y, ((frame >> 4) + i) & 3 ? UI_GREY : UI_WHITE);
+    }
+}
+
+static void papel_picado(int frame)
+{
+    static const int8_t sway[8] = { 0, 1, 2, 1, 0, -1, -2, -1 };
+    for (int x = L; x < R; x++) {
+        int d = x - CX;
+        px(x, 6 + (d * d) / 1400, UI_GREY);   /* the string sags in the middle */
+    }
+    for (int i = 0; i < 8; i++) {
+        int x = L + 6 + i * 30 + sway[((frame >> 3) + i) & 7];
+        int d = x + 9 - CX, y = 7 + (d * d) / 1400;
+        uint8_t c = fiesta_colours[i % 6];
+        ui_fill(x, y, 18, 16, c);
+        for (int k = 0; k < 4; k++) ui_fill(x + 8, y + 3 + k * 3, 2, 1, UI_BLACK);   /* punched pattern */
+        ui_fill(x + 5, y + 6, 8, 1, UI_BLACK); ui_fill(x + 5, y + 10, 8, 1, UI_BLACK);
+        ui_fill(x, y + 13, 18, 3, c);
+        for (int k = 0; k < 18; k += 3) px(x + k, y + 16, c);   /* scalloped edge */
+    }
+}
+
+/* letters drop in one by one with a bounce */
+static void title(int frame)
+{
+    static const int8_t bounce[24] = { 0, -14, -22, -26, -24, -18, -10, -2, 3, 6, 7, 6, 3, 0, -3, -4, -3, 0, 2, 2, 1, 0, 0, 0 };
+    const char *word = "FIESTA";
+    int x0 = CX - 3 * 24;
+    for (int i = 0; i < 6; i++) {
+        int t = frame - 60 - i * 9;
+        if (t < 0) continue;
+        int y = 108 + (t < 24 ? bounce[t] - (t == 0 ? 60 : 0) : 0);
+        char ch[2] = { word[i], 0 };
+        ui_text_scaled(x0 + i * 24 + 2, y + 2, ch, CUBE(2,0,1), 3);   /* shadow */
+        ui_text_scaled(x0 + i * 24, y, ch, i & 1 ? CUBE(5,5,0) : CUBE(5,1,3), 3);
+    }
+    if (frame > 150) {
+        int t = frame - 150;
+        uint8_t c = t < 15 ? UI_GREY : UI_WHITE;
+        ui_frame(CX - 84, 100, 168, 52, c);
+        ui_text_center(138, "ENTERTAINMENT SYSTEM", c);
+    }
+    if (frame > 210) {
+        int t = frame - 210;
+        uint8_t c = t < 20 ? CUBE(2,2,2) : t < 40 ? CUBE(4,4,4) : UI_WHITE;
+        ui_text_center(166, "SAN ANTONIO", c);
+        ui_text_center(182, "FIESTA 2027", t < 40 ? c : CUBE(5,5,0));
+    }
+}
+
+/* the frame is pushed strip by strip while the music core runs its scanlines */
+static void push_line(int scanline)
+{
+    if ((scanline & 15) == 15 && scanline < FB_LINES)
+        display_push_strip(ui_fb + (scanline - 15) * FB_PITCH + FB_XOFF + ui_crop(), FB_PITCH, scanline - 15, ui_pal);
+}
+
+extern bool splash_skip_requested(void);   /* main.c: any pad or medal button */
+
+void splash_run(void)
+{
+    ui_palette_cube();
+    memset(sparks, 0, sizeof sparks);
+    memset(rockets, 0, sizeof rockets);
+    rnd_state = (uint32_t)esp_timer_get_time();
+    for (int frame = 0; frame < SPLASH_FRAMES; frame++) {
+        ui_clear(UI_BLACK);
+        stars(frame);
+        skyline();
+        fireworks(frame);
+        papel_picado(frame);
+        title(frame);
+        if (frame > SPLASH_FRAMES - 90 && (frame & 16)) ui_text_center(224, "press any button", UI_GREY);
+        /* simulate at 60 Hz, present at 30: a full-frame push every music frame overran the audio budget */
+        music_tick_hook((frame & 1) ? NULL : push_line);
+        if (splash_skip_requested()) break;
+    }
+    display_wait_done();
+}
