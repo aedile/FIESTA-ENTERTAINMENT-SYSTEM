@@ -38,11 +38,11 @@ void medal_init(void)
 }
 
 /* One event per press. PWR: SHORT on release under 2 s, LONG at 2 s. BOOT: SHORT on release
- * under 3 s, HOLD3 on release between 3 and 10 s, HOLD10 the moment 10 s is reached. */
+ * under 3 s, HOLD3 the moment 3 s is reached, HOLD10 the moment 10 s is reached. */
 uint32_t medal_poll(void)
 {
     static int64_t down_since[2];
-    static bool fired[2], armed[2];
+    static bool fired3, fired[2], armed[2];
     static const gpio_num_t pin[2] = { PIN_BTN_BOOT, PIN_BTN_PWR };
     static const int64_t hold_us[2] = { 10000000, 2000000 };
     int64_t now = esp_timer_get_time();
@@ -52,14 +52,12 @@ uint32_t medal_poll(void)
         /* the medal is switched on by holding PWR: a button still held from before boot must
          * be released once before it counts, or the power-off hold fires and reboots the medal */
         if (!armed[i]) { if (!down) armed[i] = true; continue; }
-        if (down && !down_since[i]) { down_since[i] = now; fired[i] = false; }
+        if (down && !down_since[i]) { down_since[i] = now; fired[i] = false; fired3 = false; }
+        if (down && i == 0 && !fired3 && now - down_since[i] >= 3000000) { fired3 = true; ev |= BTN_BOOT_HOLD3; }
         if (down && !fired[i] && now - down_since[i] >= hold_us[i]) { fired[i] = true; ev |= i ? BTN_PWR_LONG : BTN_BOOT_HOLD10; }
         if (!down && down_since[i]) {
             int64_t held = now - down_since[i];
-            if (!fired[i] && held > 30000) {   /* 30 ms debounce */
-                if (i) ev |= BTN_PWR_SHORT;
-                else ev |= held >= 3000000 ? BTN_BOOT_HOLD3 : BTN_BOOT_SHORT;
-            }
+            if (!fired[i] && held > 30000 && held < 3000000) ev |= i ? BTN_PWR_SHORT : BTN_BOOT_SHORT;   /* 30 ms debounce */
             down_since[i] = 0;
         }
     }

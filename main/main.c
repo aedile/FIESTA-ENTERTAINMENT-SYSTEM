@@ -246,8 +246,8 @@ static uint32_t medal_events(void)
 {
     uint32_t ev = medal_poll() | serial_medal;
     serial_medal = 0;
-    if (ev & BTN_BOOT_HOLD10) { ble_pad_forget(); ble_pad_scan_any(true); }
     if (ev & BTN_BOOT_HOLD3) set_mute(!muted);
+    if (ev & BTN_BOOT_HOLD10) { set_mute(!muted); ble_pad_forget(); ble_pad_scan_any(true); }   /* the 3 s mute on the way here is undone */
     return ev;
 }
 
