@@ -309,6 +309,7 @@ static bool controller_screen(bool boot)
     int sel = 0, anim = 0;
     ui_palette_cube();
     music_start(MUSIC_TRACK);
+    ble_pad_scan_rate(true);   /* someone is at the pairing screen: listen hard */
     pad_edges();
     for (;;) {
         ble_pad_state_t st = ble_pad_state();
@@ -664,6 +665,7 @@ static void demo_loop(void)
     int first = demo_next(nroms - 1);
     int i = demo_lock >= 0 ? demo_lock : first;
     display_set_backlight(BACKLIGHT_DEMO);
+    ble_pad_scan_rate(false);   /* unattended: the radio listens 3 % of the time */
     for (;;) {
         if (demo_lock < 0 && i == first && cycle_card()) break;
         if (run_game(i, true) == GAME_DEMO_EXIT) break;
@@ -671,6 +673,7 @@ static void demo_loop(void)
         if (demo_lock >= 0) demo_set_lock(i);   /* PWR "next" while locked moves the lock along */
     }
     display_set_backlight(BACKLIGHT_PLAY);
+    ble_pad_scan_rate(true);
 }
 
 void app_main(void)

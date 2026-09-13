@@ -211,11 +211,16 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     return 0;
 }
 
+static bool scan_fast = true;
+
 static void start_scan(void)
 {
     uint8_t own_addr_type;
     if (ble_hs_id_infer_auto(0, &own_addr_type) != 0) return;
-    struct ble_gap_disc_params p = { .itvl = 0x50, .window = 0x30, .filter_duplicates = 1, .passive = 0 };
+    /* units of 0.625 ms. fast: 30 ms window every 50 ms. slow: 30 ms window every second, so a
+     * pad switched on near an unattended medal still connects within a few seconds while the
+     * receiver is off 97 % of the time */
+    struct ble_gap_disc_params p = { .itvl = scan_fast ? 0x50 : 1600, .window = 0x30, .filter_duplicates = 1, .passive = 0 };
     int rc = ble_gap_disc(own_addr_type, 30000, &p, gap_event, NULL);
     if (rc != 0 && rc != BLE_HS_EALREADY) ESP_LOGW(TAG, "ble_gap_disc rc=%d", rc);
     state = PAD_SCANNING;
@@ -312,6 +317,14 @@ void ble_pad_scan_any(bool any)
 {
     accept_any = any;
     if (state == PAD_IDLE) post(CMD_SCAN);
+}
+
+void ble_pad_scan_rate(bool fast)
+{
+    if (scan_fast == fast) return;
+    scan_fast = fast;
+    ESP_LOGI(TAG, "scan rate: %s", fast ? "fast" : "slow");
+    if (state == PAD_SCANNING) { ble_gap_disc_cancel(); post(CMD_SCAN); }   /* restart with the new parameters */
 }
 
 ble_pad_state_t ble_pad_state(void) { return state; }

@@ -27,6 +27,7 @@ typedef enum { PAD_IDLE, PAD_SCANNING, PAD_CONNECTING, PAD_CONNECTED } ble_pad_s
 
 void ble_pad_init(void);                 /* nvs_flash_init() must have run */
 void ble_pad_scan_any(bool any);         /* true: pair with any gamepad; false: saved one only */
+void ble_pad_scan_rate(bool fast);       /* fast: 60 % receive duty (pairing screen); slow: 3 % (unattended, saves ~30 mA) */
 ble_pad_state_t ble_pad_state(void);
 const char *ble_pad_name(void);          /* controller found / connected, "" if none */
 bool ble_pad_has_saved(void);
