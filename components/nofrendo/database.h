@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): game database replaced by an empty table (lookup compiled out). Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 // ###################################################################################
 // #
 // # Mesen Game Database

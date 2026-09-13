@@ -1,4 +1,6 @@
-#!/opt/homebrew/Cellar/esptool/5.4.0/libexec/bin/python
+#!/usr/bin/env python3
+# needs pyserial; on a Mac with Homebrew esptool, the interpreter in
+# /opt/homebrew/Cellar/esptool/*/libexec/bin/python already has it
 """Reset the board and print serial output for N seconds (default 8). Usage: tools/monitor.py [seconds] [port]"""
 import serial, sys, time, glob
 secs = float(sys.argv[1]) if len(sys.argv) > 1 else 8
