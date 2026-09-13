@@ -1016,8 +1016,29 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
     dev->report_read = esp_ble_hidh_dev_report_read;
     dev->dump = esp_ble_hidh_dev_dump;
 
+    /* NESTOR: pair before discovery. Some pads (8BitDo Micro) hide their HID service until the
+     * link is encrypted, and discovering first left them looking like non-HID devices. */
+    if (!ensure_encrypted(dev->ble.conn_id)) ESP_LOGW(TAG, "pairing did not complete, discovering anyway");
+
     /* perform service discovery and fill the report maps */
     read_device_services(dev);
+
+    if (dev->config.report_maps_len == 0 || dev->config.report_maps == NULL || dev->config.report_maps[0].len == 0) {
+        /* NESTOR: no HID report map: this is not a controller. Report the open as failed and
+         * drop the link here, in the opening task, rather than letting the event handler close
+         * a device this function is still using (that was a use-after-free reboot). */
+        ESP_LOGW(TAG, "no HID report map: not an HID device, disconnecting");
+        ble_gap_terminate(dev->ble.conn_id, BLE_ERR_REM_USER_CONN_TERM);
+        if (event_loop_handle) {
+            esp_hidh_event_data_t p = {0};
+            p.open.status = ESP_FAIL;
+            p.open.dev = NULL;
+            esp_event_post_to(event_loop_handle, ESP_HIDH_EVENTS, ESP_HIDH_OPEN_EVENT, &p, sizeof(esp_hidh_event_data_t), portMAX_DELAY);
+        }
+        vTaskDelay(pdMS_TO_TICKS(300));   /* let the disconnect event find the device before it goes */
+        esp_hidh_dev_free_inner(dev);
+        return NULL;
+    }
 
     if (event_loop_handle) {
         esp_hidh_event_data_t p = {0};

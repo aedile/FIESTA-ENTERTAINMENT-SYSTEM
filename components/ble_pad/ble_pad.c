@@ -1,6 +1,7 @@
 #include "ble_pad.h"
 #include <string.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -173,6 +174,8 @@ static void decode_report(uint8_t rid, const uint8_t *d, size_t len)
 
 /* ---- connection state ---- */
 static struct { uint8_t addr[6]; uint8_t type; } saved, target;
+static uint8_t bad_addr[6];
+static int64_t bad_until;
 static bool have_saved, accept_any;
 static volatile ble_pad_state_t state = PAD_IDLE;
 static char found_name[32];
@@ -222,6 +225,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             ESP_LOGI(TAG, "seen %.*s appearance %04x uuids16 %d uuids128 %d hid %d rssi %d", f.name_len, (const char *)f.name,
                      f.appearance_is_present ? f.appearance : 0, f.num_uuids16, f.num_uuids128, is_hid, disc->rssi);
         if (!(is_saved || (accept_any && (is_hid || held_close)))) return 0;
+        if (esp_timer_get_time() < bad_until && memcmp(disc->addr.val, bad_addr, 6) == 0) return 0;
         if (f.name_len) {
             int n = f.name_len < (int)sizeof found_name - 1 ? f.name_len : (int)sizeof found_name - 1;
             memcpy(found_name, f.name, n); found_name[n] = 0;
@@ -259,7 +263,10 @@ static void hidh_callback(void *arg, esp_event_base_t base, int32_t id, void *ev
     switch ((esp_hidh_event_t)id) {
     case ESP_HIDH_OPEN_EVENT:
         if (p->open.status != ESP_OK) {
-            ESP_LOGW(TAG, "open failed: %d", p->open.status);
+            ESP_LOGW(TAG, "open failed: %d, ignoring that device for a minute", p->open.status);
+            memcpy(bad_addr, target.addr, 6);
+            bad_until = esp_timer_get_time() + 60000000;
+            if (have_saved && memcmp(saved.addr, target.addr, 6) == 0) ble_pad_forget();
             dev = NULL;
             post(CMD_SCAN);
             break;
@@ -269,16 +276,10 @@ static void hidh_callback(void *arg, esp_event_base_t base, int32_t id, void *ev
             const char *n = esp_hidh_dev_name_get(dev);
             if (n && *n) strlcpy(found_name, n, sizeof found_name);
             size_t nmaps = 0; esp_hid_raw_report_map_t *maps = NULL;
-            if (esp_hidh_dev_report_maps_get(dev, &nmaps, &maps) == ESP_OK && nmaps && maps[0].len) {
+            if (esp_hidh_dev_report_maps_get(dev, &nmaps, &maps) == ESP_OK && nmaps && maps[0].len)
                 hid_parse(maps[0].data, maps[0].len);
-            } else {
-                /* not an HID device at all (a close-by gadget the proximity rule let in) */
-                ESP_LOGW(TAG, "%s has no HID report map: not a controller", found_name);
-                if (have_saved && memcmp(saved.addr, target.addr, 6) == 0) ble_pad_forget();
-                esp_hidh_dev_close(dev);   /* CLOSE_EVENT frees it and resumes scanning */
-                found_name[0] = 0;
-                break;
-            }
+            else
+                ESP_LOGW(TAG, "no report map");   /* the host rejects such devices before OPEN now */
         }
         memcpy(saved.addr, target.addr, 6); saved.type = target.type; have_saved = true;
         nvs_store();
