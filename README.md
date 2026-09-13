@@ -14,8 +14,8 @@ and it's a console.
 * Runs NES games straight out of flash (mappers 0, 1, 2 and 9: Super Mario
   Bros., Zelda, Metroid, Contra, Castlevania, Punch-Out!!, Ninja Gaiden,
   Excitebike, DuckTales, Tetris and friends) at a locked 60 fps with sound.
-* Pairs with a BLE gamepad (tested with an Xbox Wireless Controller),
-  remembers it, reconnects on boot.
+* Pairs with a BLE HID gamepad (Xbox Wireless Controller; see "Which
+  controllers work"), remembers it, reconnects on boot.
 * Box-art carousel picker, in-game menu with save states and battery saves.
 * **Demo mode** when nobody is playing: an attract card, then every game's own
   attract sequence in turn. Lock it to one game with a button, or leave a game
@@ -60,6 +60,23 @@ Bench testing without a controller: keys typed into the serial monitor act as
 a pad (w/a/s/d, j = A, k = B, q = Start, e = Select, m = Menu; n and l stand
 in for the PWR and BOOT buttons, x jumps to demo mode). `tools/drive.py`
 scripts them.
+
+## Which controllers work
+
+The ESP32-C6 has **Bluetooth Low Energy only**, so the pad must speak HID over
+BLE. Most gamepads do not; they use Bluetooth Classic, which this board cannot
+hear at all, in any mode, whatever the pad's mode switch says.
+
+| Works (BLE HID) | Does not work (Bluetooth Classic) |
+|---|---|
+| Xbox Wireless Controller, 2016 onward (tested) | 8BitDo Micro, Zero 2, SN30 Pro and the other small 8BitDo pads: their S, D and K modes are all Classic; the BLE they advertise is only a configuration channel |
+| Stadia controller after Google's Bluetooth update (untested) | PS4 DualShock 4, PS5 DualSense |
+| | Switch Pro Controller, Joy-Con |
+
+Before buying a pad for this, check that it lists Bluetooth LE HID support
+explicitly. The firmware will connect to a close-by device on the pairing
+screen and reject it if it has no HID service, so a wrong pad fails fast
+rather than half-works.
 
 ## Controls
 

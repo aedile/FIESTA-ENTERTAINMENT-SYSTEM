@@ -99,9 +99,11 @@ static uint32_t get_bits(const uint8_t *d, size_t len, int bit, int size)
     return v;
 }
 
-/* Default map is the Xbox / 8BitDo (X-input BLE) button numbering:
+/* Default map is the Xbox Wireless Controller's BLE button numbering:
  * 1 A, 2 B, 4 X, 5 Y, 7 LB, 8 RB, 11 View/Select, 12 Menu/Start.
- * Positions, not labels: the NES has A on the right and B below, which is Xbox B and A. */
+ * Positions, not labels: the NES has A on the right and B below, which is Xbox B and A.
+ * NOTE: 8BitDo pads (Micro, Zero 2, SN30...), PS4/PS5 and Switch controllers are Bluetooth
+ * Classic and can never connect to this board; the C6 has no Classic radio. */
 #define BTN(n) (1u << ((n) - 1))
 static uint32_t map_buttons(uint32_t raw)
 {
