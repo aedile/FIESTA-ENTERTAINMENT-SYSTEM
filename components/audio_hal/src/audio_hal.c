@@ -110,10 +110,12 @@ bool audio_submit(const int16_t *samples, size_t n)
     static bool started;
     if (!i2s_tx) return false;
     if (!started) { audio_start(); started = true; }
-    static const int16_t silence[AUDIO_DMA_FRAME_NUM];
+    /* muted: write the same number of samples, as silence, so the DAC still paces the caller
+     * (a shorter write let games run 30 % fast while muted) */
+    static const int16_t silence[512];
     size_t written = 0;
     const void *src = samples;
-    if (muted) { src = silence; if (n > AUDIO_DMA_FRAME_NUM) n = AUDIO_DMA_FRAME_NUM; }
+    if (muted) { src = silence; if (n > 512) n = 512; }
     /* The DMA ring plays whether or not we refilled it (underrun = silence), and the ISR
      * counts everything played. If it got ahead of us, resync so 'queued' is real again. */
     if ((int32_t)(bytes_written - bytes_sent) < 0) bytes_written = bytes_sent;

@@ -70,14 +70,32 @@ static void roms_init(void)
 {
     const esp_partition_t *p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x40, "roms");
     assert(p);
+    /* Map only what the image uses: the C6's mappable flash window is a few MB and the app
+     * already takes part of it, so mapping a whole big partition fails. Read the table first. */
+    uint8_t head[8];
+    ESP_ERROR_CHECK(esp_partition_read(p, 0, head, sizeof head));
+    size_t used = 0;
+    if (memcmp(head, "NESR", 4) == 0) {
+        uint32_t n; memcpy(&n, head + 4, 4);
+        rom_entry_t *tab = malloc(n * sizeof *tab);
+        ESP_ERROR_CHECK(esp_partition_read(p, 8, tab, n * sizeof *tab));
+        for (uint32_t i = 0; i < n; i++) {
+            size_t e = tab[i].off + tab[i].size;
+            if (tab[i].art_off) { size_t a = tab[i].art_off + (size_t)tab[i].art_w * tab[i].art_h; if (a > e) e = a; }
+            if (e > used) used = e;
+        }
+        free(tab);
+    }
+    if (used == 0 || used > p->size) used = 4096;
     esp_partition_mmap_handle_t h;
     const void *ptr;
-    ESP_ERROR_CHECK(esp_partition_mmap(p, 0, p->size, ESP_PARTITION_MMAP_DATA, &ptr, &h));
+    ESP_ERROR_CHECK(esp_partition_mmap(p, 0, used, ESP_PARTITION_MMAP_DATA, &ptr, &h));
     roms_base = ptr;
     if (memcmp(roms_base, "NESR", 4) == 0) {
         memcpy(&nroms, roms_base + 4, 4);
         roms = (const rom_entry_t *)(roms_base + 8);
     }
+    ESP_LOGI(TAG, "roms image %u bytes of a %lu byte partition", (unsigned)used, p->size);
     ESP_LOGI(TAG, "roms partition at %p: %d ROMs", ptr, nroms);
     for (int i = 0; i < nroms; i++)
         ESP_LOGI(TAG, "  [%d] %-40s %6lu bytes mapper %d art %ux%u", i, roms[i].name, roms[i].size,
@@ -123,7 +141,15 @@ static void demo_settings_load(void)
     for (int i = 0; i < nroms && i < 64; i++) {
         char k[16]; uint8_t v = 0;
         nvs_key_for(k, 'd', roms[i].name);
+#ifdef DEMO_ONLY_NEW
+        {
+            char sn[29]; short_name(roms[i].name, sn, sizeof sn);
+            demo_skip[i] = !(strstr(sn, "Mega Man 2") || strstr(sn, "Super Dodge Ball") || strstr(sn, "Super Mario Bros. 2") || strstr(sn, "Super Mario Bros. 3"));
+        }
+        if (0) {
+#else
         if (nvs_get_u8(h, k, &v) == ESP_OK) {
+#endif
             demo_skip[i] = v;
         } else {
             char sn[29]; short_name(roms[i].name, sn, sizeof sn);
