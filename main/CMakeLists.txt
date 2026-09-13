@@ -10,7 +10,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/ROMS/music/menu.nsf")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_MENU_NSF=1)
 endif()
 
-if(DEFINED DEMO_ONLY_NEW)   # bench: cycle only the games named in demo_settings_load
+if(DEMO_ONLY_NEW)   # bench: idf.py -DDEMO_ONLY_NEW=1 cycles only the games named in demo_settings_load
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DEMO_ONLY_NEW=1)
 endif()
 if(DEFINED DEMO_SECONDS)   # bench: idf.py -DDEMO_SECONDS=20 build
