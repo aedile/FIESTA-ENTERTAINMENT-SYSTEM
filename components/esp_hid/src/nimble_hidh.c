@@ -223,6 +223,7 @@ svc_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
         memcpy(service_result + services_discovered, service, sizeof(struct ble_gatt_svc));
         services_discovered++;
         uuid16 = ble_uuid_u16(&service->uuid.u);
+        { char u[BLE_UUID_STR_LEN]; ESP_LOGI(TAG, "service %s handles %u-%u", ble_uuid_to_str(&service->uuid.u, u), service->start_handle, service->end_handle); }   /* NESTOR: diagnose pads that hide HID */
         dev = esp_hidh_dev_get_by_conn_id(conn_handle);
         if (!dev) {
             ESP_LOGE(TAG, "Service discovery received for unknown device");
