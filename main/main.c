@@ -636,6 +636,7 @@ static game_result_t run_game_inner(int idx, bool demo)
 static bool cycle_card(void)
 {
     char games[32]; snprintf(games, sizeof games, "%d GAMES ON BOARD", nroms);
+    ui_palette_cube();   /* the previous game left its NES palette in the lookup table */
     music_start(MUSIC_TRACK);
     for (int frame = 0; frame < 60 * 18; frame++) {
         ui_clear(UI_BLACK);
