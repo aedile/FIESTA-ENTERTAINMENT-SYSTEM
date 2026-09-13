@@ -74,7 +74,7 @@ static void hid_parse(const uint8_t *d, size_t len)
                 if (pi == npos && npos < 8) pos[npos++].rid = rid;
                 for (uint32_t k = 0; k < rcount && pi < 8; k++) {
                     uint16_t u = nus ? usages[k < (uint32_t)nus ? k : nus - 1] : 0;
-                    if (!(v & 1) && nfields < 64 && (page == 9 || page == 1))
+                    if (!(v & 1) && nfields < 64 && (page == 9 || page == 1 || page == 7))
                         fields[nfields++] = (hid_field_t){ rid, rsize, pos[pi].bits, page, u, lmin, lmax };
                     pos[pi].bits += rsize;
                 }
@@ -147,8 +147,28 @@ static void decode_report(uint8_t rid, const uint8_t *d, size_t len)
             }
         }
     }
+    /* keyboard-mode pads (8BitDo Micro / Zero 2 in K mode) send HID keycodes in 8-bit array
+     * slots on page 7; 8BitDo's layout is letters C..O */
+    for (int f = 0; f < nfields; f++) {
+        const hid_field_t *h = &fields[f];
+        if (h->rid != rid || h->page != 7 || h->size != 8) continue;
+        uint32_t key = get_bits(d, len, h->bit, 8);
+        switch (key) {
+        case 0x06: dir |= PAD_UP; break;      /* C */
+        case 0x07: dir |= PAD_DOWN; break;    /* D */
+        case 0x08: dir |= PAD_LEFT; break;    /* E */
+        case 0x09: dir |= PAD_RIGHT; break;   /* F */
+        case 0x0A: dir |= PAD_A; break;       /* G: A, the right-hand button */
+        case 0x0D: dir |= PAD_B; break;       /* J: B, the lower button */
+        case 0x0B: dir |= PAD_B; break;       /* H: X, doubles as B */
+        case 0x0C: case 0x0E: case 0x10: dir |= PAD_MENU; break;   /* I: Y, K: L, M: R */
+        case 0x11: dir |= PAD_SELECT; break;  /* N */
+        case 0x12: dir |= PAD_START; break;   /* O */
+        default: if (key) raw |= 0x10000 | (key << 20); break;   /* unknown key: visible in the raw log */
+        }
+    }
     cur_raw = raw;
-    cur_buttons = map_buttons(raw) | dir;
+    cur_buttons = map_buttons(raw & 0xFFFF) | dir;
 }
 
 /* ---- connection state ---- */
@@ -249,10 +269,16 @@ static void hidh_callback(void *arg, esp_event_base_t base, int32_t id, void *ev
             const char *n = esp_hidh_dev_name_get(dev);
             if (n && *n) strlcpy(found_name, n, sizeof found_name);
             size_t nmaps = 0; esp_hid_raw_report_map_t *maps = NULL;
-            if (esp_hidh_dev_report_maps_get(dev, &nmaps, &maps) == ESP_OK && nmaps)
+            if (esp_hidh_dev_report_maps_get(dev, &nmaps, &maps) == ESP_OK && nmaps && maps[0].len) {
                 hid_parse(maps[0].data, maps[0].len);
-            else
-                ESP_LOGW(TAG, "no report map");
+            } else {
+                /* not an HID device at all (a close-by gadget the proximity rule let in) */
+                ESP_LOGW(TAG, "%s has no HID report map: not a controller", found_name);
+                if (have_saved && memcmp(saved.addr, target.addr, 6) == 0) ble_pad_forget();
+                esp_hidh_dev_close(dev);   /* CLOSE_EVENT frees it and resumes scanning */
+                found_name[0] = 0;
+                break;
+            }
         }
         memcpy(saved.addr, target.addr, 6); saved.type = target.type; have_saved = true;
         nvs_store();
