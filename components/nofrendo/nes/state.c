@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): state_save/state_load take an open FILE* (the port uses fmemopen), no fopen/fclose. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 /*
 ** Nofrendo (c) 1998-2000 Matthew Conte (matt@conte.com)
 **

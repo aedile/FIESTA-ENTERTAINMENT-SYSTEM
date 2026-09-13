@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): apu_process/apu_fc_advance placed in IRAM. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 /*
 ** Nofrendo (c) 1998-2000 Matthew Conte (matt@conte.com)
 **

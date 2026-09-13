@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): strip_func / line_func port hooks and profiling counters added. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 /*
 ** Nofrendo (c) 1998-2000 Matthew Conte (matt@conte.com)
 **

@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): mapper table reduced to the mappers this game set uses plus the NSF player. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 #pragma once
 
 #include "nes/mmc.h"

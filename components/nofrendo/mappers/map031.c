@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): nsf_play_song() added, play-call counter, sync write moved after the play call. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 /*
 ** Nofrendo (c) 1998-2000 Matthew Conte (matt@conte.com)
 **

@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): non-retro-go build: printf logging, ESP-IDF IRAM_ATTR, CRC lookup compiled out. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 #pragma once
 
 #ifdef RETRO_GO

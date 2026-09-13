@@ -1,4 +1,6 @@
-#!/opt/homebrew/Cellar/esptool/5.4.0/libexec/bin/python
+#!/usr/bin/env python3
+# needs pyserial; on a Mac with Homebrew esptool, the interpreter in
+# /opt/homebrew/Cellar/esptool/*/libexec/bin/python already has it
 """Reset the board, type test-pad keys at given times, echo serial output.
 Usage: tools/drive.py <seconds> [key@t ...]   e.g. tools/drive.py 20 s@6 j@7 m@12
 Keys: w/a/s/d d-pad, j A, k B, q start, e select, m menu."""

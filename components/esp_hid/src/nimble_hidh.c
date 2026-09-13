@@ -2,6 +2,12 @@
  * SPDX-FileCopyrightText: 2017-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Modified for NESTOR / F.E.S. (September 2026), from ESP-IDF v5.3.4: the read
+ * waiter is released on GATT errors; a read refused for insufficient encryption
+ * pairs, waits for ENC_CHANGE and retries; repeat pairing is handled; the device
+ * protocol mode defaults to Report; dev->connected is set after open. Look for
+ * "NESTOR" in the code.
  */
 
 #include <string.h>

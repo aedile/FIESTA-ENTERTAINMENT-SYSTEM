@@ -1,3 +1,4 @@
+/* Modified for NESTOR / F.E.S. (September 2026): strip_func / line_func hooks called from the frame loop; CPU/PPU/APU cycle profiling. Original: nofrendo as carried in retro-go, GPL-2.0, see COPYING. */
 /*
 ** Nofrendo (c) 1998-2000 Matthew Conte (matt@conte.com)
 **
