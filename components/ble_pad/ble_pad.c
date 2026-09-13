@@ -194,10 +194,14 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         for (int i = 0; i < f.num_uuids16 && !is_hid; i++)
             if (ble_uuid_u16(&f.uuids16[i].u) == 0x1812) is_hid = true;
         bool is_saved = have_saved && memcmp(disc->addr.val, saved.addr, 6) == 0;
+        /* Some pads (8BitDo Micro in D mode) advertise neither an HID appearance nor the HID
+         * service. While pairing is open, a named device held right against the medal is taken
+         * anyway; the HID discovery after connecting is what decides if it is a controller. */
+        bool held_close = f.name_len && disc->rssi >= -45;
         if (f.name_len || f.appearance_is_present)
-            ESP_LOGI(TAG, "seen %.*s appearance %04x uuids16 %d hid %d rssi %d", f.name_len, (const char *)f.name,
-                     f.appearance_is_present ? f.appearance : 0, f.num_uuids16, is_hid, disc->rssi);
-        if (!(is_saved || (accept_any && is_hid))) return 0;
+            ESP_LOGI(TAG, "seen %.*s appearance %04x uuids16 %d uuids128 %d hid %d rssi %d", f.name_len, (const char *)f.name,
+                     f.appearance_is_present ? f.appearance : 0, f.num_uuids16, f.num_uuids128, is_hid, disc->rssi);
+        if (!(is_saved || (accept_any && (is_hid || held_close)))) return 0;
         if (f.name_len) {
             int n = f.name_len < (int)sizeof found_name - 1 ? f.name_len : (int)sizeof found_name - 1;
             memcpy(found_name, f.name, n); found_name[n] = 0;

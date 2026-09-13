@@ -393,8 +393,8 @@ static bool controller_screen(bool boot)
             ui_text(UI_LEFT + 8, 76, "Saved:", UI_GREY);  ui_text(104, 76, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
             festive_dancers(frame, 146);
             if (!connected) {
-                ui_text_center(156, "Put the controller in", UI_WHITE);
-                ui_text_center(168, "pairing mode", UI_WHITE);
+                ui_text_center(156, "Pairing mode on the pad,", UI_WHITE);
+                ui_text_center(168, "hold it against the medal", UI_WHITE);
                 char d[32]; snprintf(d, sizeof d, "demo mode in %d s", (int)((demo_at - esp_timer_get_time()) / 1000000));
                 ui_text_center(184, d, UI_GREY);
             } else {
