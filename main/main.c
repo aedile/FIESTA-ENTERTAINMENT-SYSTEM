@@ -250,11 +250,16 @@ static uint32_t pad_now(void)
     return b | serial_pad();
 }
 
-/* newly pressed bits, with key repeat on the d-pad for lists */
+static void medal_global(void);
+
+/* newly pressed bits, with key repeat on the d-pad for lists. Every screen calls this each
+ * frame, so it is also where the medal's buttons get their always-on jobs (power off, mute,
+ * forget) regardless of which screen is up. */
 static uint32_t pad_edges(void)
 {
     static uint32_t prev;
     static int64_t repeat_at;
+    medal_global();
     int64_t now = esp_timer_get_time();
     uint32_t cur = pad_now(), e = cur & ~prev;
     uint32_t dpad = PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT;
@@ -266,14 +271,31 @@ static uint32_t pad_edges(void)
     return e;
 }
 
-/* medal buttons: real ones plus the serial stand-ins. BOOT 10 s forgets the pad everywhere;
- * BOOT 3 s toggles mute everywhere (the toast is drawn by the caller through toast_mute()). */
-static uint32_t medal_events(void)
+static void toast(const char *line1, const char *line2);
+static void toast_mute(void);
+static uint32_t medal_pending;   /* short presses collected by medal_global(), handed out by medal_events() */
+
+/* the medal buttons' always-on jobs, run from pad_edges() on every screen: PWR hold powers off
+ * (inside medal_poll), BOOT 3 s toggles mute, BOOT 10 s forgets the controller (and undoes the
+ * mute it passed through). Short presses are kept for the screen that wants them. */
+static void medal_global(void)
 {
     uint32_t ev = medal_poll() | serial_medal;
     serial_medal = 0;
-    if (ev & BTN_BOOT_HOLD3) set_mute(!muted);
-    if (ev & BTN_BOOT_HOLD10) { set_mute(!muted); ble_pad_forget(); ble_pad_scan_any(true); }   /* the 3 s mute on the way here is undone */
+    if (ev & BTN_BOOT_HOLD3) { set_mute(!muted); toast_mute(); }
+    if (ev & BTN_BOOT_HOLD10) {
+        set_mute(!muted);
+        ble_pad_forget(); ble_pad_scan_any(true);
+        toast("Controller forgotten", "pair one on the controller screen");
+    }
+    medal_pending |= ev & (BTN_BOOT_SHORT | BTN_PWR_SHORT);
+}
+
+static uint32_t medal_events(void)
+{
+    medal_global();
+    uint32_t ev = medal_pending;
+    medal_pending = 0;
     return ev;
 }
 
@@ -308,6 +330,7 @@ static const char *battery_warning(void)
 static void toast(const char *line1, const char *line2)
 {
     int w = 8 * (int)(strlen(line1) > strlen(line2) ? strlen(line1) : strlen(line2)) + 32;
+    if (w > 240) w = 240;
     int x = (256 - w) / 2;
     ui_fill(x, 96, w, 48, UI_BLACK);
     ui_frame(x, 96, w, 48, UI_WHITE);
@@ -340,18 +363,16 @@ static bool controller_screen(bool boot)
     for (;;) {
         ble_pad_state_t st = ble_pad_state();
         bool connected = st == PAD_CONNECTED;
-        if (!any && !connected && esp_timer_get_time() > deadline) { any = true; ble_pad_scan_any(true); }
+        if (!any && !connected && (esp_timer_get_time() > deadline || !ble_pad_has_saved())) { any = true; ble_pad_scan_any(true); }
         if (connected && any) { any = false; ble_pad_scan_any(false); }   /* reconnects go to this pad only */
         uint32_t mev = medal_events();
-        if (mev & BTN_BOOT_HOLD10) any = true;
-        if (mev & BTN_BOOT_HOLD3) toast_mute();
         if (mev & BTN_PWR_SHORT) return false;
 
         uint32_t e = pad_edges();
         if (connected || serial_active()) {
             if (e & PAD_UP) sel = 0;
             if (e & PAD_DOWN) sel = 1;
-            if ((e & PAD_A) && sel == 1) { ble_pad_forget(); any = true; ble_pad_scan_any(true); sel = 0; }
+            if ((e & PAD_A) && sel == 1) { ble_pad_forget(); any = true; ble_pad_scan_any(true); sel = 0; toast("Controller forgotten", "pair one now"); }
             if (((e & PAD_A) && sel == 0) || (e & (PAD_B | PAD_MENU))) return true;
         }
         if (boot && connected) return true;
@@ -421,7 +442,6 @@ static int picker(int sel)
         if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); }
         if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "START to switch"); }
         if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); }
-        if (mev & BTN_BOOT_HOLD3) { toast_mute(); }
         if (serial_demo) { serial_demo = false; return -1; }
         if (esp_timer_get_time() - last_input > IDLE_AFTER_US) return -1;
         if (e & PAD_MENU) { if (!controller_screen(false)) return -1; ui_palette_cube(); }
@@ -603,7 +623,6 @@ static game_result_t run_game_inner(int idx, bool demo)
         int64_t f0 = esp_timer_get_time();
         uint32_t b = 0, mev = medal_events();
         if (mev & BTN_BOOT_SHORT) { toggle_lock(idx); build_palette(4); underruns0 = audio_get_underrun_count(); }
-        if (mev & BTN_BOOT_HOLD3) { toast_mute(); build_palette(4); underruns0 = audio_get_underrun_count(); }
         if (demo) {
             if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the picker"); return GAME_DEMO_EXIT; }
             if (mev & BTN_PWR_SHORT) return GAME_DEMO_NEXT;
