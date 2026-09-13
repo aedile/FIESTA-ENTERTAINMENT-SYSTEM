@@ -144,7 +144,7 @@ static void demo_settings_load(void)
 #ifdef DEMO_ONLY_NEW
         {
             char sn[29]; short_name(roms[i].name, sn, sizeof sn);
-            demo_skip[i] = !(strstr(sn, "Mega Man 2") || strstr(sn, "Super Dodge Ball") || strstr(sn, "Super Mario Bros. 2") || strstr(sn, "Super Mario Bros. 3"));
+            demo_skip[i] = !(strstr(sn, "Mega Man 2") || strstr(sn, "Super Dodge Ball") || strstr(sn, "Super Mario Bros. 2") || strstr(sn, "Super Mario Bros. 3") || strstr(sn, "Spy Hunter") || strstr(sn, "Teenage Mutant"));
         }
         if (0) {
 #else
