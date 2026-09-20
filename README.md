@@ -97,7 +97,7 @@ every five seconds, with the per-subsystem breakdown.
 - A [Waveshare ESP32-C6-LCD-1.69](https://www.waveshare.com/esp32-c6-lcd-1.69.htm) and a USB-C cable.
 - Docker. The build runs in Espressif's `espressif/idf:v5.3.4` image; no local ESP-IDF is needed.
 - `esptool` on the host for flashing (`brew install esptool` on a Mac). Docker on macOS cannot reach USB.
-- Python 3 for the tools (standard library only).
+- Python 3 for the tools. The packer and fetchers use only the standard library; the serial monitor and key driver need `pyserial` (the Python that ships inside Homebrew's esptool already has it).
 
 ### 2. Clone
 
