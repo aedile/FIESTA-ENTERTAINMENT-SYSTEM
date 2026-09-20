@@ -27,7 +27,7 @@ carry a notice at the top; in summary (September 2026):
 
 | File | Change |
 |---|---|
-| `mappers/mappers.h` | mapper table reduced to NROM, MMC1, UxROM, MMC2 and the NSF player |
+| `mappers/mappers.h` | mapper table reduced to NROM, MMC1, UxROM, CNROM, MMC3, MMC2 and the NSF player |
 | `nes/nes.h`, `nes/nes.c` | `strip_func` (per-16-scanline callback) and `line_func` (per-scanline callback) hooks; RISC-V cycle-count profiling of CPU/PPU/APU |
 | `nes/state.c`, `nes/state.h` | `state_save`/`state_load` take an open `FILE *` instead of a filename |
 | `nes/utils.h` | non-retro-go build: `printf` logging, ESP-IDF `IRAM_ATTR`, CRC database lookup compiled out |
@@ -35,8 +35,8 @@ carry a notice at the top; in summary (September 2026):
 | `mappers/map031.c` | `nsf_play_song()` to pick a track, play-call counter, sync write moved after the play call |
 | `database.h` | replaced by an empty table (the CRC lookup is compiled out) |
 
-Only the four mappers the game set needs are included; the other 50-odd
-mapper files in retro-go's copy were not copied.
+Only the six mappers the game set needs are included, unmodified; the other
+50-odd mapper files in retro-go's copy were not copied.
 
 ### What GPL-2.0 means for the firmware image
 
@@ -54,9 +54,10 @@ The firmware is built on Espressif's ESP-IDF v5.3.4 (Apache-2.0). One IDF
 component, `esp_hid`, is vendored into `components/esp_hid` because its NimBLE
 HID host needed fixes. Only `src/nimble_hidh.c` differs from the original, and
 it says so at the top; the changes (September 2026) are: wake the waiter on
-a GATT read error, pair and wait for encryption then retry a read that
+a GATT read error, pair before service discovery and retry a read that
 failed for insufficient encryption, handle repeat pairing, default the
-protocol mode to Report, set the connected flag. Apache-2.0 requires modified
+protocol mode to Report, set the connected flag, reject a device with no HID
+report map inside the opening task, and log discovered services. Apache-2.0 requires modified
 files to be marked and the notices kept; both are done.
 
 ## Font: public domain
