@@ -4,10 +4,13 @@
 
 Layout (little-endian):
     "NESR"  u32 count
-    count x { char name[48]; u32 offset; u32 size; u32 art_offset; u16 art_w; u16 art_h; }   (64 bytes)
-    the ROM files (16-byte aligned, iNES header kept), then the art bitmaps.
+    count x { char name[48]; u32 offset; u32 size; u32 art_offset; u16 art_w; u16 art_h; u32 snap_offset; }   (68 bytes)
+    the ROM files (16-byte aligned, iNES header kept), then the art bitmaps, then the snaps.
 Art: <rom_dir>/art/<rom name>.png converted by artconv.py to 8-bit indices into a 6x6x5 RGB
 cube, at most ART_W x ART_H. art_offset 0 = no art.
+Snap: <rom_dir>/art/snaps/<rom name>.png as the wheel's backdrop: 240x280, dimmed, in its own
+56-colour palette, run-length coded per row (see artconv.rle_rows). Blob: 56 x (r,g,b),
+u32 row_offset[280] (from the start of the row data), then the rows. snap_offset 0 = none.
 
 Usage: pack_roms.py <rom_dir> <out.bin>
 """
@@ -16,7 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import artconv
 
 MAX_NAME = 48
-ENTRY = "<48sIIIHH"
+ENTRY = "<48sIIIHHI"
+SNAP_W, SNAP_H, SNAP_COLOURS = 240, 280, 56
 ART_W, ART_H = 96, 134
 
 def collect(rom_dir):
@@ -45,33 +49,45 @@ def load_art(rom_dir, name):
         print(f"pack_roms: art for {name} unusable ({e}), skipped", file=sys.stderr)
         return 0, 0, b""
 
+def load_snap(rom_dir, name):
+    p = os.path.join(rom_dir, "art", "snaps", name + ".png")
+    if not os.path.exists(p):
+        return b""
+    try:
+        pal, offs, data = artconv.convert_snap(open(p, "rb").read(), SNAP_W, SNAP_H, colours=SNAP_COLOURS)
+    except Exception as e:
+        print(f"pack_roms: snap for {name} unusable ({e}), skipped", file=sys.stderr)
+        return b""
+    return b"".join(bytes(c) for c in pal) + struct.pack(f"<{SNAP_H}I", *offs) + data
+
 def align(n): return -n & 15
 
-def pack(roms, arts):
+def pack(roms, arts, snaps):
     hdr = struct.calcsize("<4sI") + len(roms) * struct.calcsize(ENTRY)
     off = hdr + align(hdr)
-    rom_offs, blob = [], b""
-    for name, data in roms:
-        rom_offs.append(off)
-        blob += data + b"\xff" * align(len(data))
-        off += len(data) + align(len(data))
-    art_offs = []
-    for w, h, px in arts:
-        art_offs.append(off if px else 0)
-        blob += px + b"\xff" * align(len(px))
-        off += len(px) + align(len(px))
-    table = b"".join(struct.pack(ENTRY, name.encode("utf8")[:MAX_NAME - 1], ro, len(data), ao, w, h)
-                     for (name, data), ro, ao, (w, h, _) in zip(roms, rom_offs, art_offs, arts))
+    blob = b""
+    def put(chunk):
+        nonlocal off, blob
+        at = off if chunk else 0
+        blob += chunk + b"\xff" * align(len(chunk))
+        off += len(chunk) + align(len(chunk))
+        return at
+    rom_offs = [put(data) for _, data in roms]
+    art_offs = [put(px) for _, _, px in arts]
+    snap_offs = [put(sn) for sn in snaps]
+    table = b"".join(struct.pack(ENTRY, name.encode("utf8")[:MAX_NAME - 1], ro, len(data), ao, w, h, so)
+                     for (name, data), ro, ao, (w, h, _), so in zip(roms, rom_offs, art_offs, arts, snap_offs))
     return struct.pack("<4sI", b"NESR", len(roms)) + table + b"\xff" * align(hdr) + blob
 
 if __name__ == "__main__":
     roms = collect(sys.argv[1])
     arts = [load_art(sys.argv[1], n) for n, _ in roms]
-    img = pack(roms, arts)
+    snaps = [load_snap(sys.argv[1], n) for n, _ in roms]
+    img = pack(roms, arts, snaps)
     with open(sys.argv[2], "wb") as f:
         f.write(img)
-    for (name, data), (w, h, px) in zip(roms, arts):
+    for (name, data), (w, h, px), sn in zip(roms, arts, snaps):
         hd = data[:16]
         print(f"pack_roms: {name:44s} {len(data)//1024:5d}K mapper {(hd[6] >> 4) | (hd[7] & 0xF0):3d}"
-              f"{' batt' if hd[6] & 2 else '     '}  art {f'{w}x{h}' if px else 'none'}")
+              f"{' batt' if hd[6] & 2 else '     '}  art {f'{w}x{h}' if px else 'none'}  snap {f'{len(sn)//1024}K' if sn else 'none'}")
     print(f"pack_roms: {len(roms)} ROMs, {len(img)} bytes -> {sys.argv[2]}")

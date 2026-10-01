@@ -1,116 +1,54 @@
 /*
  * NESTOR - NES emulator for the Waveshare ESP32-C6-LCD-1.69, worn as a fiesta medal.
  *
- * Boot -> controller screen -> box-art picker -> game (MENU: resume / save / load /
- * picker / controller). No pad within 30 s, or a pad idle for 3 minutes -> demo mode:
- * the games' own attract modes, DEMO_SECONDS each, in a loop.
+ * Boot -> title -> the wheel -> a game (MENU: resume / save / load / controller / wheel).
+ * Left alone 45 s on the wheel, or 3 minutes in a game, the medal puts on its show: title,
+ * how to play, the wheel turning by itself, the credits, the fireworks, then the games' own
+ * attract modes DEMO_SECONDS each. Any button brings the wheel back.
  *
- * Without a controller the medal's two buttons work everywhere:
- *   PWR  short: next game            long (2 s): power off
- *   BOOT short: lock/unlock the demo to the current game (kept in NVS)
- *        hold 3 s: mute / unmute        hold 10 s: forget the saved controller
- * PRG/CHR ROM run straight out of memory-mapped flash; battery RAM and save
- * states live in the 'saves' NVS partition.
+ * The medal's two buttons work without a controller: PWR / BOOT step the wheel, BOOT held
+ * picks, both together toggle the sound, PWR held 2 s powers off, BOOT held 10 s forgets the
+ * controller. In a game BOOT locks the demo to that game and PWR leaves it.
+ * PRG/CHR ROM run straight out of memory-mapped flash; battery RAM and save states live in
+ * the 'saves' NVS partition.
  */
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_rom_crc.h"
 #include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
-#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "display.h"
 #include "audio_hal.h"
-#include "ble_pad.h"
 #include "ui.h"
 #include "saves.h"
-#include "medal.h"
 #include "music.h"
 #include "splash.h"
 #include "festive.h"
 #include "core.h"
+#include "roms.h"
+#include "input.h"
+#include "attract.h"
+#include "wheel.h"
+#include "sfx.h"
 #include "nes/nes.h"
 #include "palettes.h"
 
 static const char *TAG = "NESTOR";
 
 #define SRAM_SIZE       0x2000
-#define DEMO_AFTER_US   30000000LL   /* no controller for this long -> demo mode */
-#define IDLE_AFTER_US   180000000LL  /* pad connected but untouched this long -> demo mode */
+#define IDLE_AFTER_US   180000000LL  /* a game untouched this long -> the show */
 #ifndef DEMO_SECONDS
-#define DEMO_SECONDS    120          /* per ROM in demo mode (override: idf.py -DDEMO_SECONDS=30) */
+#define DEMO_SECONDS    120          /* per game in the show (override: idf.py -DDEMO_SECONDS=30) */
 #endif
 #define BACKLIGHT_PLAY  153          /* 60 %, as PELLETINO */
 #define BACKLIGHT_DEMO  76           /* 30 % */
-#ifndef DEFAULT_PORTRAIT
-#define DEFAULT_PORTRAIT 1           /* medals are mounted portrait; START in the picker flips it (kept in NVS) */
-#endif
-#define UI_LEFT         24           /* the medal's frame hides the leftmost columns: keep left-aligned text inside this */
-#define UI_RIGHT        232
-#define CX_TEXT(str, scale) (128 - (int)(sizeof(str) - 1) * 4 * (scale))   /* x that centres a literal at 8*scale px per glyph */
 #define MUSIC_TRACK     7            /* DuckTales NSF (joshw rip of the release): 7 = The Moon */
-
-/* ---- roms partition: image written by tools/pack_roms.py ---- */
-typedef struct __attribute__((packed)) {
-    char name[48];
-    uint32_t off, size;
-    uint32_t art_off;
-    uint16_t art_w, art_h;
-} rom_entry_t;
-static const uint8_t *roms_base;
-static const rom_entry_t *roms;
-static int nroms;
-
-static void roms_init(void)
-{
-    const esp_partition_t *p = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x40, "roms");
-    assert(p);
-    /* Map only what the image uses: the C6's mappable flash window is a few MB and the app
-     * already takes part of it, so mapping a whole big partition fails. Read the table first. */
-    uint8_t head[8];
-    ESP_ERROR_CHECK(esp_partition_read(p, 0, head, sizeof head));
-    size_t used = 0;
-    if (memcmp(head, "NESR", 4) == 0) {
-        uint32_t n; memcpy(&n, head + 4, 4);
-        rom_entry_t *tab = malloc(n * sizeof *tab);
-        ESP_ERROR_CHECK(esp_partition_read(p, 8, tab, n * sizeof *tab));
-        for (uint32_t i = 0; i < n; i++) {
-            size_t e = tab[i].off + tab[i].size;
-            if (tab[i].art_off) { size_t a = tab[i].art_off + (size_t)tab[i].art_w * tab[i].art_h; if (a > e) e = a; }
-            if (e > used) used = e;
-        }
-        free(tab);
-    }
-    if (used == 0 || used > p->size) used = 4096;
-    esp_partition_mmap_handle_t h;
-    const void *ptr;
-    ESP_ERROR_CHECK(esp_partition_mmap(p, 0, used, ESP_PARTITION_MMAP_DATA, &ptr, &h));
-    roms_base = ptr;
-    if (memcmp(roms_base, "NESR", 4) == 0) {
-        memcpy(&nroms, roms_base + 4, 4);
-        roms = (const rom_entry_t *)(roms_base + 8);
-    }
-    ESP_LOGI(TAG, "roms image %u bytes of a %lu byte partition", (unsigned)used, p->size);
-    ESP_LOGI(TAG, "roms partition at %p: %d ROMs", ptr, nroms);
-    for (int i = 0; i < nroms; i++)
-        ESP_LOGI(TAG, "  [%d] %-40s %6lu bytes mapper %d art %ux%u", i, roms[i].name, roms[i].size,
-                 (roms_base[roms[i].off + 6] >> 4) | (roms_base[roms[i].off + 7] & 0xF0), roms[i].art_w, roms[i].art_h);
-}
-
-/* "Super Mario Bros. (Japan, USA)" -> "Super Mario Bros." */
-static void short_name(const char *in, char *out, size_t n)
-{
-    const char *p = strstr(in, " (");
-    size_t len = p ? (size_t)(p - in) : strlen(in);
-    if (len >= n) len = n - 1;
-    memcpy(out, in, len);
-    out[len] = 0;
-}
+#define SHOWCASE_SECONDS 4
 
 static void log_heap(const char *when)
 {
@@ -118,374 +56,72 @@ static void log_heap(const char *when)
              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), esp_get_minimum_free_heap_size());
 }
 
-/* ---- demo settings in NVS: the locked game, and games excluded from the cycle ---- */
-#define NVS_NS "nestor"
-static int demo_lock = -1;        /* index of the game the demo is locked to, -1 = cycle */
-static bool demo_skip[64];
-static bool muted, portrait = DEFAULT_PORTRAIT;
-/* games left out of the demo cycle unless toggled back in with B in the picker (matched by short name) */
-static const char *const demo_skip_default[] = { "DuckTales", "Double Dragon", "Mega Man", "Final Fantasy", "Super Dodge Ball" };
-
-static void nvs_key_for(char out[16], char type, const char *rom)
+/* the menus: portrait panel, cube palette, music if there is any */
+static void menu_mode(void)
 {
-    snprintf(out, 16, "%c%08lx", type, (unsigned long)esp_rom_crc32_le(0, (const uint8_t *)rom, strlen(rom)));
+    ui_layout(UI_LAYOUT_MENU);
+    ui_palette_cube();
+    music_start(MUSIC_TRACK);
 }
 
-static void demo_settings_load(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
-    char lock[48] = {0}; size_t n = sizeof lock;
-    if (nvs_get_str(h, "demo_lock", lock, &n) == ESP_OK)
-        for (int i = 0; i < nroms; i++) if (strcmp(roms[i].name, lock) == 0) demo_lock = i;
-    for (int i = 0; i < nroms && i < 64; i++) {
-        char k[16]; uint8_t v = 0;
-        nvs_key_for(k, 'd', roms[i].name);
-#ifdef DEMO_ONLY_NEW
-        {
-            char sn[29]; short_name(roms[i].name, sn, sizeof sn);
-            demo_skip[i] = !(strstr(sn, "Mega Man 2") || strstr(sn, "Super Dodge Ball") || strstr(sn, "Super Mario Bros. 2") || strstr(sn, "Super Mario Bros. 3") || strstr(sn, "Spy Hunter") || strstr(sn, "Teenage Mutant"));
-        }
-        if (0) {
-#else
-        if (nvs_get_u8(h, k, &v) == ESP_OK) {
-#endif
-            demo_skip[i] = v;
-        } else {
-            char sn[29]; short_name(roms[i].name, sn, sizeof sn);
-            for (size_t d = 0; d < sizeof demo_skip_default / sizeof *demo_skip_default; d++)
-                if (strcmp(sn, demo_skip_default[d]) == 0) demo_skip[i] = true;
-        }
-    }
-    uint8_t m = 0;
-    muted = nvs_get_u8(h, "mute", &m) == ESP_OK && m;
-    audio_set_mute(muted);
-    if (nvs_get_u8(h, "portrait", &m) == ESP_OK) portrait = m;
-    nvs_close(h);
-    ESP_LOGI(TAG, "demo lock: %s", demo_lock >= 0 ? roms[demo_lock].name : "none");
-}
-
-static void demo_set_lock(int idx)
-{
-    demo_lock = idx;
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    if (idx >= 0) nvs_set_str(h, "demo_lock", roms[idx].name); else nvs_erase_key(h, "demo_lock");
-    nvs_commit(h); nvs_close(h);
-}
-
-static void demo_set_skip(int idx, bool skip)
-{
-    demo_skip[idx] = skip;
-    char k[16]; nvs_key_for(k, 'd', roms[idx].name);
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_u8(h, k, skip);   /* explicit 0 so a default exclusion can be turned back on */
-    nvs_commit(h); nvs_close(h);
-}
-
-static void set_mute(bool m)
-{
-    muted = m;
-    audio_set_mute(m);
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "mute", m); nvs_commit(h); nvs_close(h); }
-    ESP_LOGI(TAG, "%s", m ? "muted" : "sound on");
-}
-
-static void set_portrait(bool p)
-{
-    portrait = p;
-    display_set_orientation(p);
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, "portrait", p); nvs_commit(h); nvs_close(h); }
-    ESP_LOGI(TAG, "%s", p ? "portrait" : "landscape");
-}
-
-static int demo_next(int i)
-{
-    for (int n = (i + 1) % nroms, tries = 0; tries < nroms; n = (n + 1) % nroms, tries++)
-        if (!demo_skip[n]) return n;
-    return (i + 1) % nroms;   /* everything excluded: cycle anyway */
-}
-
-/* ---- input: the BLE pad, plus keys typed into the serial monitor for bench testing
- * (w/a/s/d = d-pad, j = A, k = B, q = start, e = select, m = menu; x = demo now,
- *  n / l = the medal's PWR / BOOT short press) ---- */
-static int64_t serial_last = -10000000;
-static bool serial_demo;
-static uint32_t serial_medal;
-static bool serial_active(void) { return esp_timer_get_time() - serial_last < 5000000; }
-
-static uint32_t serial_pad(void)
-{
-    static const char keys[] = "wsadjkqem";
-    static const uint32_t bits[] = { PAD_UP, PAD_DOWN, PAD_LEFT, PAD_RIGHT, PAD_A, PAD_B, PAD_START, PAD_SELECT, PAD_MENU };
-    static int64_t held_until[9];
-    int64_t now = esp_timer_get_time();
-    uint8_t c;
-    while (usb_serial_jtag_read_bytes(&c, 1, 0) == 1) {
-        const char *k = memchr(keys, c, sizeof keys - 1);
-        if (k) { held_until[k - keys] = now + 120000; serial_last = now; }
-        if (c == 'x') { serial_demo = true; serial_last = now; }
-        if (c == 'n') { serial_medal |= BTN_PWR_SHORT; serial_last = now; }
-        if (c == 'l') { serial_medal |= BTN_BOOT_SHORT; serial_last = now; }
-    }
-    uint32_t m = 0;
-    for (int i = 0; i < 9; i++) if (held_until[i] > now) m |= bits[i];
-    return m;
-}
-
-static uint32_t pad_now(void)
-{
-    uint32_t b = ble_pad_buttons(), raw = ble_pad_raw();
-    static uint32_t last_b = 0, last_raw = 0;
-    if (b != last_b || raw != last_raw) {
-        ESP_LOGI(TAG, "PAD raw=%04lx %s%s%s%s%s%s%s%s%s", raw,
-                 b & PAD_UP ? "UP " : "", b & PAD_DOWN ? "DOWN " : "", b & PAD_LEFT ? "LEFT " : "",
-                 b & PAD_RIGHT ? "RIGHT " : "", b & PAD_A ? "A " : "", b & PAD_B ? "B " : "",
-                 b & PAD_START ? "START " : "", b & PAD_SELECT ? "SELECT " : "", b & PAD_MENU ? "MENU " : "");
-        last_b = b; last_raw = raw;
-    }
-    return b | serial_pad();
-}
-
-static void medal_global(void);
-
-/* newly pressed bits, with key repeat on the d-pad for lists. Every screen calls this each
- * frame, so it is also where the medal's buttons get their always-on jobs (power off, mute,
- * forget) regardless of which screen is up. */
-static uint32_t pad_edges(void)
-{
-    static uint32_t prev;
-    static int64_t repeat_at;
-    medal_global();
-    int64_t now = esp_timer_get_time();
-    uint32_t cur = pad_now(), e = cur & ~prev;
-    uint32_t dpad = PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT;
-    if (cur & dpad) {
-        if (e & dpad) repeat_at = now + 400000;
-        else if (now > repeat_at) { e |= cur & dpad; repeat_at = now + 120000; }
-    }
-    prev = cur;
-    return e;
-}
-
-static void toast(const char *line1, const char *line2);
-static void toast_mute(void);
-static uint32_t medal_pending;   /* short presses collected by medal_global(), handed out by medal_events() */
-
-/* the medal buttons' always-on jobs, run from pad_edges() on every screen: PWR hold powers off
- * (inside medal_poll), BOOT 3 s toggles mute, BOOT 10 s forgets the controller (and undoes the
- * mute it passed through). Short presses are kept for the screen that wants them. */
-static void medal_global(void)
-{
-    uint32_t ev = medal_poll() | serial_medal;
-    serial_medal = 0;
-    if (ev & BTN_BOOT_HOLD3) { set_mute(!muted); toast_mute(); }
-    if (ev & BTN_BOOT_HOLD10) {
-        set_mute(!muted);
-        ble_pad_forget(); ble_pad_scan_any(true);
-        toast("Controller forgotten", "pair one on the controller screen");
-    }
-    medal_pending |= ev & (BTN_BOOT_SHORT | BTN_PWR_SHORT);
-}
-
-static uint32_t medal_events(void)
-{
-    medal_global();
-    uint32_t ev = medal_pending;
-    medal_pending = 0;
-    return ev;
-}
-
-bool splash_skip_requested(void) { return pad_edges() || (medal_events() & (BTN_BOOT_SHORT | BTN_PWR_SHORT)); }
-
+/* splash.c's hooks */
+bool splash_skip_requested(void) { return any_button(); }
 const uint8_t *splash_cover(const char *sn, int *w, int *h)
 {
-    for (int i = 0; i < nroms; i++) {
-        char n[29]; short_name(roms[i].name, n, sizeof n);
-        if (strcmp(n, sn) == 0 && roms[i].art_off) { *w = roms[i].art_w; *h = roms[i].art_h; return roms_base + roms[i].art_off; }
-    }
-    *w = 96; *h = 134;
-    return NULL;
+    int i = rom_find_short(sn);
+    return rom_art(i, w, h);
 }
 
-/* ---- battery: a warning under 15 %, and power-off once a plausible reading sits under 3 % for a minute.
- * The plausibility window (2.9-3.4 V) keeps a mis-scaled ADC from ever switching the medal off. ---- */
-#define BATTERY_WARN_PCT 15
-static const char *battery_warning(void)
+/* ---- controller screen ---- */
+static void controller_screen(void)
 {
-    static int64_t low_since;
-    int pct = medal_battery_percent(), mv = medal_battery_mv();
-    bool plausible = mv > 2900 && mv < 3400;
-    if (pct < 3 && plausible) {
-        if (!low_since) low_since = esp_timer_get_time();
-        if (esp_timer_get_time() - low_since > 60000000) { ESP_LOGW(TAG, "battery %d mV: powering off", mv); medal_power_off(); }
-    } else low_since = 0;
-    return pct < BATTERY_WARN_PCT ? "LOW BATTERY" : NULL;
-}
-
-/* ---- overlays ---- */
-static void toast(const char *line1, const char *line2)
-{
-    int w = 8 * (int)(strlen(line1) > strlen(line2) ? strlen(line1) : strlen(line2)) + 32;
-    if (w > 240) w = 240;
-    int x = (256 - w) / 2;
-    ui_fill(x, 96, w, 48, UI_BLACK);
-    ui_frame(x, 96, w, 48, UI_WHITE);
-    ui_text_center(108, line1, UI_YELLOW);
-    ui_text_center(124, line2, UI_WHITE);
-    ui_present();
-    for (int i = 0; i < 60; i++) music_tick();   /* ~1 s, music keeps playing if any */
-}
-
-static void toast_mute(void) { toast(muted ? "Muted" : "Sound on", "SELECT or hold BOOT 3 s"); }
-
-static void toggle_lock(int idx)
-{
-    char name[29]; short_name(roms[idx].name, name, sizeof name);
-    if (demo_lock == idx) { demo_set_lock(-1); toast("Demo unlocked", "cycling all games"); }
-    else { demo_set_lock(idx); toast("Demo locked on", name); }
-}
-
-/* ---- controller screen. Returns false if nothing connected for DEMO_AFTER_US (or PWR pressed). ---- */
-static bool controller_screen(bool boot)
-{
-    int64_t deadline = esp_timer_get_time() + ((boot && ble_pad_has_saved()) ? 5000000 : 0);
-    int64_t demo_at = esp_timer_get_time() + DEMO_AFTER_US;
-    bool any = false;
-    int sel = 0, anim = 0;
-    ui_palette_cube();
-    music_start(MUSIC_TRACK);
-    ble_pad_scan_rate(true);   /* someone is at the pairing screen: listen hard */
+    int sel = 0;
+    int64_t last = esp_timer_get_time();
+    menu_mode();
     pad_edges();
-    for (;;) {
+    for (int frame = 0; ; frame++) {
         ble_pad_state_t st = ble_pad_state();
         bool connected = st == PAD_CONNECTED;
-        if (!any && !connected && (esp_timer_get_time() > deadline || !ble_pad_has_saved())) { any = true; ble_pad_scan_any(true); }
-        if (connected && any) { any = false; ble_pad_scan_any(false); }   /* reconnects go to this pad only */
-        uint32_t mev = medal_events();
-        if (mev & BTN_PWR_SHORT) return false;
-
-        uint32_t e = pad_edges();
-        if (connected || serial_active()) {
-            if (e & PAD_UP) sel = 0;
-            if (e & PAD_DOWN) sel = 1;
-            if ((e & PAD_A) && sel == 1) { ble_pad_forget(); any = true; ble_pad_scan_any(true); sel = 0; toast("Controller forgotten", "pair one now"); }
-            if (((e & PAD_A) && sel == 0) || (e & (PAD_B | PAD_MENU))) return true;
-        }
-        if (boot && connected) return true;
-        if (!connected && !serial_active() && esp_timer_get_time() > demo_at) return false;
-
-        {
-            int frame = anim++;
-            ui_clear(UI_BLACK);
-            festive_confetti(frame);
-            festive_papel_picado(frame);
-            ui_text_center(36, "CONTROLLER", UI_YELLOW);
-            const char *s = "Idle"; uint8_t c = UI_GREY;
-            if (st == PAD_SCANNING) { s = "Scanning..."; c = UI_WHITE; }
-            if (st == PAD_CONNECTING) { s = "Connecting..."; c = UI_YELLOW; }
-            if (connected) { s = "Connected"; c = UI_GREEN; }
-            ui_text(UI_LEFT + 8, 52, "Status:", UI_GREY); ui_text(104, 52, s, c);
-            ui_text(UI_LEFT + 8, 64, "Found:", UI_GREY);  ui_text(104, 64, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
-            ui_text(UI_LEFT + 8, 76, "Saved:", UI_GREY);  ui_text(104, 76, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
-            festive_dancers(frame, 146);
-            if (!connected) {
-                ui_text_center(156, "Pairing mode on the pad,", UI_WHITE);
-                ui_text_center(168, "hold it against the medal", UI_WHITE);
-                char d[32]; snprintf(d, sizeof d, "demo mode in %d s", (int)((demo_at - esp_timer_get_time()) / 1000000));
-                ui_text_center(184, d, UI_GREY);
-            } else {
-                ui_text(48, 156, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(64, 156, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
-                ui_text(48, 170, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(64, 170, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
-            }
-            ui_text_center(200, "PWR demo now  hold: power off", UI_GREY);
-            ui_text_center(216, "BOOT 3s mute  10s forget pad", UI_GREY);
-            music_tick_hook((frame & 1) ? NULL : ui_line_push);   /* 30 fps under the music */
-        }
-    }
-}
-
-/* ---- box-art picker: the selected cover big in the middle, neighbours half size ---- */
-static void draw_cover(int idx, int cx, int cy, int num, int den)
-{
-    const rom_entry_t *r = &roms[idx];
-    int w = r->art_off ? r->art_w : 96, h = r->art_off ? r->art_h : 134;
-    int ow = w * num / den, oh = h * num / den, x = cx - ow / 2, y = cy - oh / 2;
-    if (r->art_off) {
-        ui_bitmap(x, y, roms_base + r->art_off, w, h, num, den);
-    } else {
-        ui_fill(x, y, ow, oh, UI_GREY);
-        if (num == den) { char n[13]; short_name(r->name, n, sizeof n); ui_text_center(cy - 4, n, UI_WHITE); }
-    }
-}
-
-static int picker(int sel)
-{
-    bool has_save[64];
-    for (int i = 0; i < nroms && i < 64; i++) has_save[i] = saves_has_sram(roms[i].name);
-    int anim = 0;
-    int64_t last_input = esp_timer_get_time();
-    ui_palette_cube();
-    display_set_backlight(BACKLIGHT_PLAY);
-    music_start(MUSIC_TRACK);
-    pad_edges();
-    for (;;) {
         uint32_t e = pad_edges(), mev = medal_events();
-        if (e || mev) last_input = esp_timer_get_time();
-        if ((e & PAD_LEFT) && sel > 0) { sel--; }
-        if (((e & PAD_RIGHT) || (mev & BTN_PWR_SHORT)) && sel < nroms - 1) { sel++; }
-        if (e & PAD_A) return sel;
-        if (e & PAD_B) { demo_set_skip(sel, !demo_skip[sel]); }
-        if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); }
-        if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "START to switch"); }
-        if ((mev & BTN_BOOT_SHORT) && nroms) { toggle_lock(sel); }
-        if (serial_demo) { serial_demo = false; return -1; }
-        if (esp_timer_get_time() - last_input > IDLE_AFTER_US) return -1;
-        if (e & PAD_MENU) { if (!controller_screen(false)) return -1; ui_palette_cube(); }
-        if (ble_pad_state() != PAD_CONNECTED && !serial_active()) { if (!controller_screen(false)) return -1; ui_palette_cube(); }
-        {
-            int frame = anim++;
-            ui_clear(UI_BLACK);
-            festive_confetti(frame);
-            festive_papel_picado(frame);
-            ui_text(UI_LEFT, 38, "F.E.S.", UI_YELLOW);
-            char bat[8]; snprintf(bat, sizeof bat, "%d%%", medal_battery_percent());
-            if (!(battery_warning() && (frame & 32))) ui_text(UI_LEFT + 64, 38, bat, UI_GREY);
-            if (nroms == 0) { ui_text_center(100, "No ROMs in partition", UI_RED); music_tick_hook(ui_line_push); continue; }
-            if (sel > 0) draw_cover(sel - 1, 48, 116, 1, 2);
-            if (sel + 1 < nroms) draw_cover(sel + 1, 208, 116, 1, 2);
-            draw_cover(sel, 128, 116, 1, 1);
-            uint8_t fc = sel == demo_lock ? UI_YELLOW : fiesta_colours[(frame >> 4) % 6];
-            ui_frame(128 - 50, 116 - 69, 100, 138, fc);
-            ui_frame(128 - 51, 116 - 70, 102, 140, fc);
-            char name[29]; short_name(roms[sel].name, name, sizeof name);
-            ui_text_center(190, name, UI_WHITE);
-            char tags[40] = "";
-            if (has_save[sel]) strcat(tags, "* saved  ");
-            if (demo_skip[sel]) strcat(tags, "no demo  ");
-            if (sel == demo_lock) strcat(tags, "demo locked  ");
-            if (muted) strcat(tags, "muted");
-            ui_text_center(203, tags, has_save[sel] ? UI_GREEN : UI_GREY);
-            const char *warn = battery_warning();
-            if (warn && (frame & 32)) ui_text(UI_LEFT + 64, 38, warn, UI_RED);
-            char pos[24]; snprintf(pos, sizeof pos, "%d/%d", sel + 1, nroms);
-            ui_text(UI_RIGHT - 8 * strlen(pos), 38, pos, UI_GREY);
-            ui_text_center(216, "A play  B demo  SEL mute", UI_GREY);
-            ui_text_center(228, "START rotate  MENU controller", UI_GREY);
-            music_tick_hook((frame & 1) ? NULL : ui_line_push);
+        if (e || mev) last = esp_timer_get_time();
+        if (mev & (BTN_PWR_SHORT | BTN_BOOT_SHORT)) return;
+        if (e & PAD_UP) sel = 0;
+        if (e & PAD_DOWN) sel = 1;
+        if ((e & PAD_A) && sel == 1) { pad_forget(); sel = 0; toast("Controller forgotten", "pair one now"); }
+        if (((e & PAD_A) && sel == 0) || (e & (PAD_B | PAD_MENU))) return;
+        if (esp_timer_get_time() - last > 60000000) return;
+
+        ui_clear(UI_BLACK);
+        festive_confetti(frame);
+        festive_papel_picado(frame);
+        ui_text_centred_scaled(ui_w / 2, 44, "CONTROLLER", UI_YELLOW, 2);
+        const char *s = "Idle"; uint8_t c = UI_GREY;
+        if (st == PAD_SCANNING) { s = "Scanning..."; c = UI_WHITE; }
+        if (st == PAD_CONNECTING) { s = "Connecting..."; c = UI_YELLOW; }
+        if (connected) { s = "Connected"; c = UI_GREEN; }
+        ui_text(32, 76, "Status:", UI_GREY); ui_text(104, 76, s, c);
+        ui_text(32, 88, "Found:", UI_GREY);  ui_text(104, 88, ble_pad_name()[0] ? ble_pad_name() : "-", UI_WHITE);
+        ui_text(32, 100, "Saved:", UI_GREY); ui_text(104, 100, ble_pad_has_saved() ? "yes" : "no", UI_WHITE);
+        festive_dancers(frame, 186);
+        if (!connected) {
+            ui_text_center(200, "Pairing mode on the pad,", UI_WHITE);
+            ui_text_center(212, "hold it against the medal", UI_WHITE);
+            ui_text_center(232, "Xbox pads (Bluetooth LE)", UI_GREY);
+        } else {
+            ui_text(56, 200, sel == 0 ? ">" : " ", UI_YELLOW); ui_text(72, 200, "Back", sel == 0 ? UI_YELLOW : UI_WHITE);
+            ui_text(56, 214, sel == 1 ? ">" : " ", UI_YELLOW); ui_text(72, 214, "Forget this controller", sel == 1 ? UI_YELLOW : UI_WHITE);
         }
+        ui_text_center(256, "B BACK", UI_GREY);
+        music_tick_hook((frame & 1) ? NULL : ui_line_push);   /* 30 fps under the music */
     }
 }
 
 /* ---- in-game menu ---- */
-enum { MENU_RESUME, MENU_SAVE, MENU_LOAD, MENU_RESET, MENU_MUTE, MENU_PICKER, MENU_CONTROLLER, MENU_COUNT };
+enum { MENU_RESUME, MENU_SAVE, MENU_LOAD, MENU_RESET, MENU_MUTE, MENU_WHEEL, MENU_CONTROLLER, MENU_COUNT };
 static int game_menu(const char *rom)
 {
     const char *items[MENU_COUNT] = { "Resume", "Save state", "Load state", "Reset game", muted ? "Unmute" : "Mute",
-                                      "Return to picker", "Controller" };
+                                      "Back to the wheel", "Controller" };
     bool have_state = saves_has_state(rom);
     int sel = 0;
     bool dirty = true;
@@ -561,13 +197,38 @@ static void sram_flush(nes_t *nes, const char *rom, bool force)
     sram_last_crc = crc;
 }
 
-typedef enum { GAME_PICKER, GAME_IDLE, GAME_DEMO_NEXT, GAME_DEMO_EXIT } game_result_t;
+/* the show's card before each game: its screenshot behind its cover; silent */
+static bool demo_card(int idx)
+{
+    char name[29]; rom_short_name(idx, name, sizeof name);
+    int aw, ah;
+    const uint8_t *art = rom_art(idx, &aw, &ah), *snap = rom_snap(idx);
+    ui_layout(UI_LAYOUT_MENU); ui_palette_cube();
+    any_button();
+    for (int t = 0; t < 120; t++) {
+        if (snap) ui_snap(snap); else { ui_clear(UI_BLACK); ui_stars(t); }
+        int h = 150, w = aw * h / ah;
+        if (art) ui_bitmap(ui_w / 2 - w / 2, 36, art, aw, ah, h, ah); else ui_fill(ui_w / 2 - w / 2, 36, w, h, UI_GREY);
+        ui_fill(0, 198, ui_w, 82, UI_BLACK);
+        ui_text_center(206, name, UI_WHITE);
+        ui_text_center(220, demo_lock == idx ? "DEMO (LOCKED)" : "DEMO", UI_GREY);
+        ui_text_center(248, "PRESS A BUTTON TO PLAY", (t & 32) ? UI_YELLOW : UI_GREY);
+        music_tick_hook((t & 1) ? NULL : ui_line_push);
+        if (any_button()) return true;
+    }
+    return false;
+}
+
+typedef enum { GAME_WHEEL, GAME_IDLE, GAME_DEMO_NEXT, GAME_DEMO_EXIT } game_result_t;
 
 static game_result_t run_game_inner(int idx, bool demo);
 
 /* demo: no input, DEMO_SECONDS limit unless locked, saves untouched */
 static game_result_t run_game(int idx, bool demo)
 {
+    music_stop();
+    if (demo && demo_card(idx)) return GAME_DEMO_EXIT;
+    ui_layout(UI_LAYOUT_NES);
     game_result_t r = run_game_inner(idx, demo);
     core_unload();   /* hand the core back to the menu music */
     return r;
@@ -575,31 +236,12 @@ static game_result_t run_game(int idx, bool demo)
 
 static game_result_t run_game_inner(int idx, bool demo)
 {
-    const char *rom = roms[idx].name;
-    music_stop();
-    ui_palette_cube();
-    if (demo) {
-        /* title card: cover, confetti, flags; silent, a one-second music sting between games felt odd */
-        char name[29]; short_name(rom, name, sizeof name);
-        for (int frame = 0; frame < 150; frame++) {
-            ui_clear(UI_BLACK);
-            festive_confetti(frame);
-            festive_papel_picado(frame);
-            draw_cover(idx, 128, 104, 1, 1);
-            ui_frame(78, 35, 100, 138, fiesta_colours[(frame >> 4) % 6]);
-            ui_text_center(180, name, UI_YELLOW);
-            ui_text_center(196, demo_lock == idx ? "demo (locked)" : "demo", UI_GREY);
-            const char *warn = battery_warning();
-            ui_text_center(216, warn && (frame & 32) ? warn : "press any pad button to play", warn && (frame & 32) ? UI_RED : UI_GREY);
-            music_tick_hook((frame & 1) ? NULL : ui_line_push);   /* no music loaded: just paces and pushes */
-            if (pad_edges()) return GAME_DEMO_EXIT;
-        }
-    }
+    const char *rom = rom_get(idx)->name;
     nes_t *nes = nes_getptr();
-    if (!core_load(roms_base + roms[idx].off, roms[idx].size)) {
+    if (!core_load(rom_data(idx), rom_get(idx)->size)) {
         ui_clear(UI_BLACK); ui_text_center(112, "Unsupported ROM", UI_RED); ui_present();
         vTaskDelay(pdMS_TO_TICKS(1500));
-        return demo ? GAME_DEMO_NEXT : GAME_PICKER;
+        return demo ? GAME_DEMO_NEXT : GAME_WHEEL;
     }
     nes->strip_func = push_strip;
     nes_setvidbuf(ui_fb);
@@ -624,14 +266,14 @@ static game_result_t run_game_inner(int idx, bool demo)
         uint32_t b = 0, mev = medal_events();
         if (mev & BTN_BOOT_SHORT) { toggle_lock(idx); build_palette(4); underruns0 = audio_get_underrun_count(); }
         if (demo) {
-            if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the picker"); return GAME_DEMO_EXIT; }
+            if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the wheel"); return GAME_DEMO_EXIT; }
             if (mev & BTN_PWR_SHORT) return GAME_DEMO_NEXT;
             if (demo_lock != idx && f0 - t_start > (int64_t)DEMO_SECONDS * 1000000) return GAME_DEMO_NEXT;
         } else {
             b = pad_now();
             if (b != prev) last_input = f0;
             if (f0 - last_input > IDLE_AFTER_US) { sram_flush(nes, rom, true); return GAME_IDLE; }
-            if (mev & BTN_PWR_SHORT) { sram_flush(nes, rom, true); return GAME_PICKER; }
+            if (mev & BTN_PWR_SHORT) { sram_flush(nes, rom, true); return GAME_WHEEL; }
         }
         if (!demo && (b & PAD_MENU) && !(prev & PAD_MENU)) {
             sram_flush(nes, rom, true);
@@ -640,8 +282,8 @@ static game_result_t run_game_inner(int idx, bool demo)
             if (a == MENU_LOAD) saves_load_state(rom);
             if (a == MENU_RESET) nes_reset(true);
             if (a == MENU_MUTE) set_mute(!muted);
-            if (a == MENU_CONTROLLER) { controller_screen(false); build_palette(4); }   /* music_start is a no-op: core busy */
-            if (a == MENU_PICKER) return GAME_PICKER;
+            if (a == MENU_CONTROLLER) { controller_screen(); ui_layout(UI_LAYOUT_NES); build_palette(4); }   /* music_start is a no-op: core busy */
+            if (a == MENU_WHEEL) return GAME_WHEEL;
             prev = pad_now();
             last_input = esp_timer_get_time();
             underruns0 = audio_get_underrun_count();   /* menus don't feed the DAC; don't count that */
@@ -678,44 +320,26 @@ static game_result_t run_game_inner(int idx, bool demo)
     }
 }
 
-/* attract card at the top of each demo cycle: what this thing is and how many games it carries */
-static bool cycle_card(void)
-{
-    char games[32]; snprintf(games, sizeof games, "%d GAMES ON BOARD", nroms);
-    ui_palette_cube();   /* the previous game left its NES palette in the lookup table */
-    music_start(MUSIC_TRACK);
-    for (int frame = 0; frame < 60 * 18; frame++) {
-        ui_clear(UI_BLACK);
-        festive_confetti(frame);
-        festive_papel_picado(frame);
-        ui_text_scaled(CX_TEXT("FIESTA", 3), 44, "FIESTA", (frame >> 3) & 1 ? CUBE(5,5,0) : CUBE(5,1,3), 3);
-        ui_text_center(74, "ENTERTAINMENT SYSTEM", UI_WHITE);
-        ui_text_center(90, "SAN ANTONIO 2027", UI_YELLOW);
-        festive_dancers(frame, 160);
-        ui_text_center(176, games, (frame >> 4) & 1 ? UI_WHITE : UI_GREEN);
-        ui_text_center(196, "grab a controller to play", UI_GREY);
-        ui_text_center(216, "or just watch the show", UI_GREY);
-        music_tick_hook((frame & 1) ? NULL : ui_line_push);
-        if (pad_edges()) { music_stop(); return true; }
-    }
-    music_stop();
-    return false;
-}
-
-/* every game (or the locked one) until someone presses a pad button */
-static void demo_loop(void)
+/* ---- the show: attract scenes, then every game (or the locked one) until a button ---- */
+static void show(void)
 {
     serial_demo = false;
-    if (!nroms) { vTaskDelay(pdMS_TO_TICKS(1000)); return; }
-    int first = demo_next(nroms - 1);
-    int i = demo_lock >= 0 ? demo_lock : first;
     display_set_backlight(BACKLIGHT_DEMO);
     ble_pad_scan_rate(false);   /* unattended: the radio listens 3 % of the time */
     for (;;) {
-        if (demo_lock < 0 && i == first && cycle_card()) break;
-        if (run_game(i, true) == GAME_DEMO_EXIT) break;
-        i = demo_next(i);
-        if (demo_lock >= 0) demo_set_lock(i);   /* PWR "next" while locked moves the lock along */
+        menu_mode();
+        if (attract_title() || attract_howto() || wheel_showcase(SHOWCASE_SECONDS) || attract_credits()) break;
+        ui_layout(UI_LAYOUT_NES);
+        if (splash_run()) break;
+        if (!roms_count()) continue;
+        int first = demo_next(roms_count() - 1), i = demo_lock >= 0 ? demo_lock : first;
+        bool out = false;
+        do {
+            out = run_game(i, true) == GAME_DEMO_EXIT;
+            i = demo_next(i);
+            if (demo_lock >= 0) demo_set_lock(i);   /* PWR "next" while locked moves the lock along */
+        } while (!out && (demo_lock >= 0 || i != first));
+        if (out) break;
     }
     display_set_backlight(BACKLIGHT_PLAY);
     ble_pad_scan_rate(true);
@@ -740,20 +364,25 @@ void app_main(void)
     ble_pad_init();
     roms_init();
     saves_init();
-    demo_settings_load();
-    display_set_orientation(portrait);
+    settings_load();
+    ui_set_portrait_games(portrait);
     log_heap("after display+audio+BLE");
     ESP_LOGI(TAG, "reset reason %d (1 power-on, 3 software, 6 task wdt, 7 int wdt, 8 deep sleep, 9 brownout)", esp_reset_reason());
 
-    music_start(MUSIC_TRACK);
-    splash_run();
-    bool have_pad = controller_screen(true);
-    int sel = 0;
+    display_set_backlight(BACKLIGHT_PLAY);
+    menu_mode();
+    attract_title();
+    wheel_init(roms_count());
     for (;;) {
-        if (!have_pad || sel < 0) { demo_loop(); have_pad = true; sel = 0; }
-        sel = picker(sel);
-        if (sel < 0) continue;
-        game_result_t r = run_game(sel, false);
-        if (r == GAME_IDLE) sel = -1;
+        menu_mode();
+        int game = 0;
+        switch (wheel_run(&game)) {
+        case WHEEL_PLAY:
+            if (run_game(game, false) == GAME_IDLE) show();
+            break;
+        case WHEEL_CREDITS: attract_credits(); break;
+        case WHEEL_CONTROLLER: controller_screen(); break;
+        case WHEEL_IDLE: show(); break;
+        }
     }
 }

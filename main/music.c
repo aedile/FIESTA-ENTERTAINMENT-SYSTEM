@@ -4,7 +4,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "audio_hal.h"
+#include "ui.h"
+#include <string.h>
 #include "core.h"
+#include "sfx.h"
 #include "nes/nes.h"
 
 static const char *TAG = "MUSIC";
@@ -34,8 +37,13 @@ void music_tick(void) { music_tick_hook(NULL); }
 void music_tick_hook(void (*line)(int scanline))
 {
     if (!playing) {
+        /* no tune: a frame of silence still carries the effects and paces us to the DAC */
+        static int16_t silence[AUDIO_SAMPLE_RATE / 60 + 1];
         if (line) for (int y = 0; y < 262; y++) line(y);
-        vTaskDelay(pdMS_TO_TICKS(16));
+        ui_line_flush();
+        memset(silence, 0, sizeof silence);
+        sfx_mix(silence, AUDIO_SAMPLE_RATE / 60, AUDIO_SAMPLE_RATE);
+        audio_submit(silence, AUDIO_SAMPLE_RATE / 60);
         return;
     }
     nes_t *nes = nes_getptr();
@@ -43,6 +51,8 @@ void music_tick_hook(void (*line)(int scanline))
     int64_t t0 = esp_timer_get_time();
     nes_emulate(false);
     nes->line_func = NULL;
+    ui_line_flush();
+    sfx_mix(nes->apu->buffer, nes->apu->samples_per_frame, AUDIO_SAMPLE_RATE);
     int64_t t1 = esp_timer_get_time();
     audio_submit(nes->apu->buffer, nes->apu->samples_per_frame);
     static int64_t report, emu_us; static int frames; static uint32_t underruns0;

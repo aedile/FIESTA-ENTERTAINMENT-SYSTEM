@@ -2,16 +2,13 @@
 #include <stdbool.h>
 #include "ui.h"
 
-#define L 8
-#define R 248
-#define CX 128
+#define L 0
+#define R ui_w
+#define CX (ui_w / 2)
 
 const uint8_t fiesta_colours[6] = { CUBE(5,1,3), CUBE(0,5,4), CUBE(5,5,0), CUBE(1,5,1), CUBE(5,3,0), CUBE(3,0,4) };
 
-void festive_px(int x, int y, uint8_t c)
-{
-    if (x >= L && x < R && y >= 0 && y < FB_LINES) ui_fb[y * FB_PITCH + FB_XOFF + x] = c;
-}
+void festive_px(int x, int y, uint8_t c) { ui_px(x, y, c); }
 
 void festive_papel_picado(int frame)
 {
@@ -21,7 +18,7 @@ void festive_papel_picado(int frame)
         festive_px(x, 6 + (d * d) / 1400, UI_GREY);   /* the string sags in the middle */
     }
     for (int i = 0; i < 8; i++) {
-        int x = L + 6 + i * 30 + sway[((frame >> 3) + i) & 7];
+        int x = L + (R - L - 8 * 30 + 12) / 2 + i * 30 + sway[((frame >> 3) + i) & 7];
         int d = x + 9 - CX, y = 7 + (d * d) / 1400;
         uint8_t c = fiesta_colours[i % 6];
         ui_fill(x, y, 18, 16, c);
@@ -37,7 +34,7 @@ void festive_confetti(int frame)
     static const int8_t sway[16] = { 0, 1, 1, 2, 2, 2, 1, 1, 0, -1, -1, -2, -2, -2, -1, -1 };
     for (int i = 0; i < 48; i++) {
         uint32_t h = (uint32_t)(i + 1) * 2654435761u;
-        int speed = 1 + (h & 1), period = FB_LINES + 40;
+        int speed = 1 + (h & 1), period = ui_h + 40;
         int y = (((h >> 8) % period) + frame * speed / 2) % period - 20;
         int x = L + (h >> 16) % (R - L) + sway[((frame >> 2) + i) & 15];
         uint8_t c = fiesta_colours[i % 6];
@@ -137,11 +134,11 @@ void festive_dancers(int frame, int floor_y)
     int beat = (frame >> 3) & 3;                 /* ~2 Hz step */
     int bounce = beat == 1 || beat == 3 ? -3 : 0;
     bool swing = (frame >> 4) & 1;               /* skirt / strum alternates ~every half second */
-    int top = floor_y - 24 * SCALE;
+    int top = floor_y - 24 * SCALE, x0 = (ui_w - 232) / 2;
     /* stage: dancer, mariachi, dancer, mariachi across the width */
-    sprite(dancer, 20, 12, top + bounce, swing, 0, 0, CUBE(5,1,3));
-    sprite(mariachi, 16, 70, top - bounce, false, 13, swing ? 1 : 0, 0);
-    sprite(dancer, 20, 134, top + bounce, !swing, 0, 0, CUBE(0,5,4));
-    sprite(mariachi, 16, 196, top - bounce, true, 13, swing ? 0 : 1, 0);
+    sprite(dancer, 20, x0, top + bounce, swing, 0, 0, CUBE(5,1,3));
+    sprite(mariachi, 16, x0 + 58, top - bounce, false, 13, swing ? 1 : 0, 0);
+    sprite(dancer, 20, x0 + 122, top + bounce, !swing, 0, 0, CUBE(0,5,4));
+    sprite(mariachi, 16, x0 + 184, top - bounce, true, 13, swing ? 0 : 1, 0);
     ui_fill(L, floor_y, R - L, 1, CUBE(4,3,1));  /* the floor */
 }

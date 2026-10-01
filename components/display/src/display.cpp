@@ -21,7 +21,7 @@ static spi_transaction_t trans[2]; // Transaction descriptors
 static bool trans_pending = false;
 uint32_t display_wait_us = 0;   // time spent waiting for a queued strip DMA to finish
 static constexpr size_t DMA_BUFFER_SIZE = GAME_WIDTH_MAX * STRIP_ROWS * 2;
-static int game_w = 256, game_x = 12, game_y = 0;   // where the game rectangle sits; set by display_set_orientation
+static int game_w = 256, game_x = 12, game_y = 0, game_h = GAME_HEIGHT;   // the push rectangle; display_set_orientation / display_set_rect
 static bool is_portrait = false;
 
 // ST7789 Commands
@@ -246,24 +246,27 @@ void display_write_preswapped(const uint16_t *data, uint32_t len) {
   current_buffer = 1 - current_buffer;
 }
 
-IRAM_ATTR void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal) {
+IRAM_ATTR void display_push_rows2(const uint8_t *rows, int pitch, int y0, int n, const uint16_t *pal, const uint16_t *pal_odd) {
   if (y0 == 0) {
     display_wait_done();   // commands are polling transfers: the queue must be empty
-    display_set_window(game_x, game_y, game_w, GAME_HEIGHT);
+    display_set_window(game_x, game_y, game_w, game_h);
   }
+  if (n > STRIP_ROWS) n = STRIP_ROWS;
+  if (n <= 0) return;
   // Convert into the free buffer while the other strip is on the wire.
   // Two pixels per 32-bit store, eight per iteration; src is read as 32-bit words
-  // (the framebuffer rows are 4-byte aligned: pitch 272, x offset 8).
+  // (framebuffer rows are 4-byte aligned).
   uint32_t *dst = (uint32_t *)dma_buffer[current_buffer];
   const int words = game_w / 4;
-  for (int r = 0; r < STRIP_ROWS; r++) {
+  for (int r = 0; r < n; r++) {
     const uint32_t *src = (const uint32_t *)(rows + r * pitch);
+    const uint16_t *p = (pal_odd && ((y0 + r) & 1)) ? pal_odd : pal;
     for (int x = 0; x < words; x += 2) {
       uint32_t a = src[x], b = src[x + 1];
-      dst[0] = pal[a & 0xFF] | (uint32_t)pal[(a >> 8) & 0xFF] << 16;
-      dst[1] = pal[(a >> 16) & 0xFF] | (uint32_t)pal[a >> 24] << 16;
-      dst[2] = pal[b & 0xFF] | (uint32_t)pal[(b >> 8) & 0xFF] << 16;
-      dst[3] = pal[(b >> 16) & 0xFF] | (uint32_t)pal[b >> 24] << 16;
+      dst[0] = p[a & 0xFF] | (uint32_t)p[(a >> 8) & 0xFF] << 16;
+      dst[1] = p[(a >> 16) & 0xFF] | (uint32_t)p[a >> 24] << 16;
+      dst[2] = p[b & 0xFF] | (uint32_t)p[(b >> 8) & 0xFF] << 16;
+      dst[3] = p[(b >> 16) & 0xFF] | (uint32_t)p[b >> 24] << 16;
       dst += 4;
     }
   }
@@ -274,7 +277,7 @@ IRAM_ATTR void display_push_strip(const uint8_t *rows, int pitch, int y0, const 
     display_wait_us += esp_timer_get_time() - w0;
     trans_pending = false;
   }
-  trans[current_buffer].length = game_w * STRIP_ROWS * 2 * 8;
+  trans[current_buffer].length = game_w * n * 2 * 8;
   trans[current_buffer].rxlength = 0;
   trans[current_buffer].tx_buffer = dma_buffer[current_buffer];
   trans[current_buffer].rx_buffer = nullptr;
@@ -284,9 +287,17 @@ IRAM_ATTR void display_push_strip(const uint8_t *rows, int pitch, int y0, const 
   current_buffer = 1 - current_buffer;
 }
 
+void display_push_rows(const uint8_t *rows, int pitch, int y0, int n, const uint16_t *pal) {
+  display_push_rows2(rows, pitch, y0, n, pal, nullptr);
+}
+
+void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal) {
+  display_push_rows2(rows, pitch, y0, STRIP_ROWS, pal, nullptr);
+}
+
 void display_push_indexed(const uint8_t *fb, int pitch, const uint16_t *pal) {
-  for (int y = 0; y < GAME_HEIGHT; y += STRIP_ROWS)
-    display_push_strip(fb + y * pitch, pitch, y, pal);
+  for (int y = 0; y < game_h; y += STRIP_ROWS)
+    display_push_rows2(fb + y * pitch, pitch, y, game_h - y, pal, nullptr);
 }
 
 void display_wait_done(void) {
@@ -305,8 +316,11 @@ void display_set_orientation(bool portrait) {
   send_data(&madctl, 1);
   if (portrait) { game_w = 240; game_x = 0; game_y = (280 - GAME_HEIGHT) / 2; }
   else          { game_w = 256; game_x = (280 - 256) / 2; game_y = 0; }
+  game_h = GAME_HEIGHT;
   display_fill(0x0000);
 }
+
+void display_set_rect(int x, int y, int w, int h) { display_wait_done(); game_x = x; game_y = y; game_w = w; game_h = h; }
 
 int display_game_width(void) { return game_w; }
 

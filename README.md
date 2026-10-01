@@ -113,7 +113,7 @@ as `.nes` files or zips containing one, then fetch covers and the menu music:
 
 ```sh
 mkdir -p ROMS && cp /path/to/your/*.zip ROMS/
-tools/fetch_art.py          # box art    -> ROMS/art/<name>.png
+tools/fetch_art.py          # box art    -> ROMS/art/<name>.png, screenshots -> ROMS/art/snaps/
 tools/fetch_music.py        # menu music -> ROMS/music/menu.nsf  (needs bsdtar)
 ```
 
@@ -141,9 +141,9 @@ flash the board resets twice; that is the USB serial port closing, not a crash.
 
 ### 6. First boot
 
-The splash plays (any button skips it), then the controller screen. Put a
-supported gamepad in pairing mode and hold it against the medal. With no
-controller, demo mode starts after 30 seconds.
+The title plays, then the wheel. Put a supported gamepad in pairing mode and
+hold it against the medal; the wheel also turns with the medal's own buttons.
+Left alone, the medal starts its show.
 
 ### Troubleshooting
 
@@ -181,42 +181,47 @@ Gamepad, Nintendo positions (on an Xbox pad, B is NES A and A is NES B):
 
 | Screen | Controls |
 |---|---|
-| Picker | D-pad left/right, A play, B toggle the game in or out of the demo rotation, Select mute, Start portrait/landscape, Y or a shoulder button for the controller screen |
-| Game | Y or a shoulder button opens the menu: Resume, Save state, Load state, Reset game, Mute, Return to picker, Controller |
+| Wheel | D-pad up/down, A play, B toggle the game in or out of the show's rotation, Select mute, Start portrait/landscape (games only), Y or a shoulder button for the controller screen |
+| Game | Y or a shoulder button opens the menu: Resume, Save state, Load state, Reset game, Mute, Back to the wheel, Controller |
 | Controller screen | Back, Forget this controller |
 
-Medal buttons, on every screen, no controller needed:
+Medal buttons, no controller needed:
 
 | Button | Short press | Hold |
 |---|---|---|
-| PWR | next game (demo), move right (picker), leave the game | 2 s: power off |
-| BOOT | lock or unlock the demo to the current game | 3 s: mute; 10 s: forget the controller |
+| PWR | step the wheel; next game (show); leave the game | 2 s: power off |
+| BOOT | step the wheel back; lock or unlock the show to the current game | on the wheel, 2 s: play the game; 10 s: forget the controller |
+| Both together | sound on / off | |
 
-## The flow: splash, picker, demo mode
+## The flow: title, wheel, show
 
-Splash → controller screen → box-art picker → game.
+Title → wheel → game.
 
-- **Splash.** A cold open races FIESTA across the screen, then hard-cuts through
-  box art from the ROM partition while ENTERTAINMENT SYSTEM and FIESTA 2027 scroll
-  through a letterbox band. It lands on fireworks over the Tower of the Americas.
-  About 34 seconds, skippable.
-- **Demo mode** starts when no pad connects within 30 s, or a connected pad is
-  idle for 3 minutes. It shows an 18 s attract card, then each game's own attract
-  mode for 2 minutes, in a loop. Any pad button returns to the picker. Battery
-  saves are neither loaded nor written in demo mode.
-- **Lock** the demo to one game with BOOT; the choice survives a reboot, so a
-  medal can be "the Contra one" all day.
+- **Title.** The wordmark crosses a starfield, the screen flashes white with the
+  sound of a blade being drawn, and the title is there as it clears: a
+  perspective grid, a console, the game count, CRT line dimming over all of it.
+- **The wheel.** The chosen game's cover large in the middle over its own
+  screenshot, dimmed; neighbours smaller above and below. Each step clicks.
+  Holding BOOT raises a tone and grows the cover until the game launches;
+  A launches it at once. The last entry on the wheel is the credits.
+- **The show** starts when the wheel is untouched for 45 s, or a game for 3
+  minutes: title, how to play, the wheel turning by itself, the credits, the
+  fireworks over the Tower of the Americas, then each game's own attract mode
+  for 2 minutes. Any button returns to the wheel. Battery saves are neither
+  loaded nor written in the show.
+- **Lock** the show to one game with BOOT in that game; the choice survives a
+  reboot, so a medal can be "the Contra one" all day.
 - Games whose title screens never demo are left out of the rotation by a default
-  list at the top of `main/main.c`; B in the picker overrides it per device.
+  list at the top of `main/input.c`; B on the wheel overrides it per device.
 
-Kept in NVS: the paired controller, demo lock, per-game demo exclusion, mute and
+Kept in NVS: the paired controller, the lock, per-game exclusion, mute and
 orientation. Battery RAM and save states live in their own NVS partition.
 
 ## Adding games, covers and music
 
 Drop a zip in `ROMS/`, run `tools/fetch_art.py`, rebuild and flash. Nothing is
-hard-coded; the picker shows whatever the partition holds. Covers come from the
-libretro-thumbnails project, whose files use the same No-Intro names as the ROMs
+hard-coded; the wheel shows whatever the partition holds. Covers and screenshots
+come from the libretro-thumbnails project, whose files use the same No-Intro names as the ROMs
 (the fetcher tries looser region and revision tags when the exact name is
 missing). To use your own art, put a PNG at `ROMS/art/<rom name>.png`. The build
 quantises covers to a 180-colour cube with ordered dithering, in pure Python.
@@ -227,7 +232,7 @@ The menu music is whatever NSF sits at `ROMS/music/menu.nsf`; the track number i
 ## Repository layout
 
 ```
-main/            app: flow, picker, menus, demo mode, splash, festive drawing, saves, music
+main/            app: flow, title and attract scenes, the wheel, sound effects, in-game menu, saves, music
 components/
   display/       ST7789 driver, DMA strip push, runtime orientation (from PELLETINO)
   audio_hal/     ES8311 + I2S DMA, queue-depth accounting (from PELLETINO)

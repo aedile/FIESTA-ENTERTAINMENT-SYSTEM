@@ -38,32 +38,46 @@ void medal_init(void)
 }
 
 /* One event per press. PWR: SHORT on release under 2 s, LONG at 2 s. BOOT: SHORT on release
- * under 3 s, HOLD3 the moment 3 s is reached, HOLD10 the moment 10 s is reached. */
+ * under 3 s (unless consumed), HOLD10 the moment 10 s is reached. Both down together: BOTH, once,
+ * and neither button counts on its own until both are up again. */
+static int64_t down_since[2];
+static bool fired[2], armed[2], consumed[2], both_seen;
+
 uint32_t medal_poll(void)
 {
-    static int64_t down_since[2];
-    static bool fired3, fired[2], armed[2];
     static const gpio_num_t pin[2] = { PIN_BTN_BOOT, PIN_BTN_PWR };
     static const int64_t hold_us[2] = { 10000000, 2000000 };
     int64_t now = esp_timer_get_time();
     uint32_t ev = 0;
+    bool d[2];
     for (int i = 0; i < 2; i++) {
-        bool down = gpio_get_level(pin[i]) == 0;
+        d[i] = gpio_get_level(pin[i]) == 0;
         /* the medal is switched on by holding PWR: a button still held from before boot must
          * be released once before it counts, or the power-off hold fires and reboots the medal */
-        if (!armed[i]) { if (!down) armed[i] = true; continue; }
-        if (down && !down_since[i]) { down_since[i] = now; fired[i] = false; fired3 = false; }
-        if (down && i == 0 && !fired3 && now - down_since[i] >= 3000000) { fired3 = true; ev |= BTN_BOOT_HOLD3; }
-        if (down && !fired[i] && now - down_since[i] >= hold_us[i]) { fired[i] = true; ev |= i ? BTN_PWR_LONG : BTN_BOOT_HOLD10; }
+        if (!armed[i]) { if (!d[i]) armed[i] = true; d[i] = false; }
+    }
+    if (d[0] && d[1]) {
+        if (!both_seen) { both_seen = true; ev |= BTN_BOTH; }
+        consumed[0] = consumed[1] = true;
+        return ev;
+    }
+    if (!d[0] && !d[1]) both_seen = false;
+    for (int i = 0; i < 2; i++) {
+        bool down = d[i];
+        if (down && !down_since[i]) { down_since[i] = now; fired[i] = false; consumed[i] = false; }
+        if (down && !fired[i] && !consumed[i] && now - down_since[i] >= hold_us[i]) { fired[i] = true; ev |= i ? BTN_PWR_LONG : BTN_BOOT_HOLD10; }
         if (!down && down_since[i]) {
             int64_t held = now - down_since[i];
-            if (!fired[i] && held > 30000 && held < 3000000) ev |= i ? BTN_PWR_SHORT : BTN_BOOT_SHORT;   /* 30 ms debounce */
+            if (!fired[i] && !consumed[i] && held > 30000 && held < 3000000) ev |= i ? BTN_PWR_SHORT : BTN_BOOT_SHORT;
             down_since[i] = 0;
         }
     }
     if (ev & BTN_PWR_LONG) medal_power_off();
     return ev;
 }
+
+int medal_boot_held_ms(void) { return down_since[0] && !consumed[0] ? (int)((esp_timer_get_time() - down_since[0]) / 1000) : 0; }
+void medal_boot_consume(void) { consumed[0] = true; }
 
 static int last_mv;
 

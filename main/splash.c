@@ -261,13 +261,13 @@ static bool cold_open(void)
     return true;
 }
 
-void splash_run(void)
+bool splash_run(void)
 {
     ui_palette_cube();
     memset(sparks, 0, sizeof sparks);
     memset(rockets, 0, sizeof rockets);
     rnd_state = (uint32_t)esp_timer_get_time();
-    if (!cold_open()) { display_wait_done(); return; }
+    if (!cold_open()) { display_wait_done(); return true; }
     for (int frame = 30; frame < SPLASH_FRAMES; frame++) {
         ui_clear(UI_BLACK);
         stars(frame);
@@ -279,7 +279,8 @@ void splash_run(void)
         if (frame > SPLASH_FRAMES - 390 && (frame & 16)) ui_text_center(224, "press any button", UI_GREY);   /* from ~13.5 s in */
         /* simulate at 60 Hz, present at 30: a full-frame push every music frame overran the audio budget */
         music_tick_hook((frame & 1) ? NULL : ui_line_push);
-        if (splash_skip_requested()) break;
+        if (splash_skip_requested()) { display_wait_done(); return true; }
     }
     display_wait_done();
+    return false;
 }

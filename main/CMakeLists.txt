@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "main.c" "ui.c" "saves.c" "medal.c" "music.c" "core.c" "splash.c" "festive.c"
+         "roms.c" "input.c" "sfx.c" "attract.c" "wheel.c"
     INCLUDE_DIRS "."
     REQUIRES display audio_hal ble_pad nofrendo driver esp_timer nvs_flash esp_partition esp_adc
 )
@@ -10,9 +11,6 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/ROMS/music/menu.nsf")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_MENU_NSF=1)
 endif()
 
-if(DEMO_ONLY_NEW)   # bench: idf.py -DDEMO_ONLY_NEW=1 cycles only the games named in demo_settings_load
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE DEMO_ONLY_NEW=1)
-endif()
 if(DEFINED DEMO_SECONDS)   # bench: idf.py -DDEMO_SECONDS=20 build
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DEMO_SECONDS=${DEMO_SECONDS})
 endif()
@@ -20,7 +18,7 @@ endif()
 # Pack ROMS/ into the 'roms' partition image and flash it with `idf.py flash`.
 # CONFIGURE_DEPENDS: dropping a new ROM into the folder is picked up by the next build.
 set(ROMS_DIR "${CMAKE_SOURCE_DIR}/ROMS")
-file(GLOB ROM_FILES CONFIGURE_DEPENDS "${ROMS_DIR}/*.zip" "${ROMS_DIR}/*.nes" "${ROMS_DIR}/art/*.png")
+file(GLOB ROM_FILES CONFIGURE_DEPENDS "${ROMS_DIR}/*.zip" "${ROMS_DIR}/*.nes" "${ROMS_DIR}/art/*.png" "${ROMS_DIR}/art/snaps/*.png")
 set(ROMS_BIN "${CMAKE_BINARY_DIR}/roms.bin")
 idf_build_get_property(python PYTHON)
 add_custom_command(OUTPUT "${ROMS_BIN}"

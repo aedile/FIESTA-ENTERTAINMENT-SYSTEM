@@ -23,10 +23,11 @@ def decode_png(data):
         elif typ == b"IDAT":
             idat.append(body)
         pos += 12 + ln
-    assert depth == 8 and interlace == 0, f"unsupported PNG (depth {depth}, interlace {interlace})"
+    assert interlace == 0 and (depth == 8 or (depth in (1, 2, 4) and ctype in (0, 3))), f"unsupported PNG (depth {depth}, type {ctype}, interlace {interlace})"
     bpp = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
     raw = zlib.decompress(b"".join(idat))
-    stride = w * bpp
+    stride = w * bpp if depth == 8 else (w * depth + 7) // 8
+    if depth < 8: bpp = 1
     prev = bytearray(stride)
     rows = []
     p = 0
@@ -42,6 +43,11 @@ def decode_png(data):
             elif f == 4:
                 pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
                 cur[i] = (cur[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        if depth < 8:                                   # unpack 1/2/4-bit samples, MSB first
+            vals = [(cur[(x * depth) // 8] >> (8 - depth - (x * depth) % 8)) & ((1 << depth) - 1) for x in range(w)]
+            if ctype == 3: rows.append([plte[v] for v in vals])
+            else: rows.append([(v * 255 // ((1 << depth) - 1),) * 3 for v in vals])
+            prev = cur; continue
         if ctype == 2: rows.append([tuple(cur[i:i + 3]) for i in range(0, stride, 3)])
         elif ctype == 6: rows.append([tuple(cur[i:i + 3]) for i in range(0, stride, 4)])
         elif ctype == 0: rows.append([(v, v, v) for v in cur])
@@ -73,6 +79,86 @@ def convert(png_bytes, out_w, out_h):
             bi = min(4, max(0, int(b / 63.75 + d + 0.5)))
             out[y * ow + x] = ri * 30 + gi * 5 + bi
     return ow, oh, bytes(out)
+
+def _resample(rows, w, h, ow, oh, x_off=0, y_off=0, src_w=None, src_h=None):
+    """box-filter resample of the source window (x_off, y_off, src_w, src_h) to ow x oh -> list of (r,g,b) rows"""
+    src_w = src_w or w; src_h = src_h or h
+    out = []
+    for y in range(oh):
+        y0 = y_off + y * src_h // oh; y1 = max(y0 + 1, y_off + (y + 1) * src_h // oh)
+        row = []
+        for x in range(ow):
+            x0 = x_off + x * src_w // ow; x1 = max(x0 + 1, x_off + (x + 1) * src_w // ow)
+            r = g = b = n = 0
+            for yy in range(y0, y1):
+                sr = rows[yy]
+                for xx in range(x0, x1):
+                    pr, pg, pb = sr[xx]; r += pr; g += pg; b += pb; n += 1
+            row.append((r // n, g // n, b // n))
+        out.append(row)
+    return out
+
+def _median_cut(pixels, count):
+    """classic median cut over a list of (r,g,b) -> up to `count` representative colours"""
+    boxes = [pixels]
+    while len(boxes) < count:
+        boxes.sort(key=lambda b: -len(b))
+        box = boxes[0]
+        if len(box) < 2: break
+        rng = [max(p[c] for p in box) - min(p[c] for p in box) for c in range(3)]
+        c = rng.index(max(rng))
+        if rng[c] == 0: break
+        box.sort(key=lambda p: p[c])
+        mid = len(box) // 2
+        boxes = boxes[1:] + [box[:mid], box[mid:]]
+    pal = []
+    for b in boxes:
+        n = len(b) or 1
+        pal.append(tuple(sum(p[c] for p in b) // n for c in range(3)))
+    return pal
+
+def rle_rows(rows_idx):
+    """mqart-style run-length coding, one row at a time: control < 128 copies control+1 bytes,
+    control >= 128 repeats the next byte control-126 times. -> (row_offsets, data)"""
+    offs, data = [], bytearray()
+    for row in rows_idx:
+        offs.append(len(data))
+        i, n = 0, len(row)
+        while i < n:
+            j = i
+            while j + 1 < n and row[j + 1] == row[i] and j - i < 128: j += 1
+            run = j - i + 1
+            if run >= 3:
+                data += bytes([126 + run, row[i]]); i += run
+            else:
+                k = i
+                while k < n and k - i < 128 and not (k + 2 < n and row[k] == row[k + 1] == row[k + 2]): k += 1
+                data += bytes([k - i - 1]) + bytes(row[i:k]); i = k
+    return offs, bytes(data)
+
+def convert_snap(png_bytes, out_w=240, out_h=280, dim=0.30, colours=56):
+    """A screenshot as the wheel's backdrop: scaled to fill out_w x out_h (centre-cropped),
+    dimmed to `dim`, reduced to its own `colours`-entry palette (median cut, no dither: dim
+    pictures dither to noise). -> (palette[(r,g,b)...], row_offsets, rle_bytes), indices 0..colours-1"""
+    w, h, rows = decode_png(png_bytes)
+    scale = max(out_w / w, out_h / h)
+    sw, sh = int(out_w / scale), int(out_h / scale)
+    img = _resample(rows, w, h, out_w, out_h, (w - sw) // 2, (h - sh) // 2, sw, sh)
+    px = [(int(r * dim), int(g * dim), int(b * dim)) for row in img for (r, g, b) in row]
+    sample = px[::7] if len(px) > 20000 else px
+    pal = _median_cut(list(sample), colours)
+    while len(pal) < colours: pal.append((0, 0, 0))
+    def nearest(c):
+        return min(range(len(pal)), key=lambda i: (pal[i][0]-c[0])**2 + (pal[i][1]-c[1])**2 + (pal[i][2]-c[2])**2)
+    cache = {}
+    idx = []
+    for c in px:
+        k = (c[0] >> 2, c[1] >> 2, c[2] >> 2)
+        if k not in cache: cache[k] = nearest(c)
+        idx.append(cache[k])
+    rows_idx = [idx[y * out_w:(y + 1) * out_w] for y in range(out_h)]
+    offs, data = rle_rows(rows_idx)
+    return pal, offs, data
 
 def palette_rgb(index):
     """The RGB the firmware assigns to a cube index (keep in sync with main/ui.c)."""

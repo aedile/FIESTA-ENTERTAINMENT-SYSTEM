@@ -57,10 +57,13 @@ void display_write_preswapped(const uint16_t *data, uint32_t len);
 
 /**
  * Choose the orientation (see top of file). Safe to call any time after display_init;
- * clears the panel. display_game_width() is then 256 (landscape) or 240 (portrait):
- * callers hand display_push_* rows of that many pixels, i.e. skip 8 px on the left in portrait.
+ * clears the panel and sets the push rectangle to the NES frame for that orientation:
+ * display_game_width() is then 256 (landscape) or 240 (portrait), so callers skip 8 px on
+ * the left in portrait. display_set_rect() overrides the rectangle (the menus push the
+ * whole portrait panel, 240x280) until the next display_set_orientation().
  */
 void display_set_orientation(bool portrait);
+void display_set_rect(int x, int y, int w, int h);
 int display_game_width(void);
 
 /**
@@ -77,6 +80,10 @@ void display_push_indexed(const uint8_t *fb, int pitch, const uint16_t *pal);
  * queued for DMA, so the caller can go on rendering while it transfers.
  */
 void display_push_strip(const uint8_t *rows, int pitch, int y0, const uint16_t *pal);
+/* same for n (<= STRIP_ROWS) rows: the odd-sized last strip of a 280-row frame */
+void display_push_rows(const uint8_t *rows, int pitch, int y0, int n, const uint16_t *pal);
+/* ...with a second palette for the odd rows (the menus' CRT look); NULL = same as pal */
+void display_push_rows2(const uint8_t *rows, int pitch, int y0, int n, const uint16_t *pal, const uint16_t *pal_odd);
 extern uint32_t display_wait_us;   /* accumulated time blocked on strip DMA completion (profiling) */
 
 /**
