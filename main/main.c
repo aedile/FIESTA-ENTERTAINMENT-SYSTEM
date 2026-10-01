@@ -3,8 +3,8 @@
  *
  * Boot -> title -> the wheel -> a game (MENU: resume / save / load / controller / wheel).
  * Left alone 45 s on the wheel, or 3 minutes in a game, the medal puts on its show: title,
- * how to play, the wheel turning by itself, the credits, the fireworks, then the games' own
- * attract modes DEMO_SECONDS each. Any button brings the wheel back.
+ * how to play, the wheel turning by itself, then one game's own attract mode for DEMO_SECONDS;
+ * round again with the next game. Any button brings the wheel back.
  *
  * The medal's two buttons work without a controller: PWR / BOOT step the wheel, BOOT held
  * picks, both together cycle the volume (full, quiet, muted), PWR held 2 s powers off, BOOT held
@@ -28,7 +28,6 @@
 #include "ui.h"
 #include "saves.h"
 #include "music.h"
-#include "splash.h"
 #include "festive.h"
 #include "core.h"
 #include "roms.h"
@@ -63,14 +62,6 @@ static void menu_mode(void)
     ui_layout(UI_LAYOUT_MENU);
     ui_palette_cube();
     music_start(MUSIC_TRACK);
-}
-
-/* splash.c's hooks */
-bool splash_skip_requested(void) { return any_button(); }
-const uint8_t *splash_cover(const char *sn, int *w, int *h)
-{
-    int i = rom_find_short(sn);
-    return rom_art(i, w, h);
 }
 
 /* ---- controller screen ---- */
@@ -322,26 +313,21 @@ static game_result_t run_game_inner(int idx, bool demo)
     }
 }
 
-/* ---- the show: attract scenes, then every game (or the locked one) until a button ---- */
+/* ---- the show: title, how to play, the wheel turning through every game, then one game's own
+ * attract mode; round again with the next game (or the locked one) until a button ---- */
 static void show(void)
 {
+    static int demo_at = -1;   /* which game demos next, across visits */
     serial_demo = false;
     display_set_backlight(BACKLIGHT_DEMO);
     ble_pad_scan_rate(false);   /* unattended: the radio listens 3 % of the time */
     for (;;) {
         menu_mode();
-        if (attract_title() || attract_howto() || wheel_showcase(SHOWCASE_SECONDS) || attract_credits()) break;
-        ui_layout(UI_LAYOUT_NES);
-        if (splash_run()) break;
+        if (attract_title() || attract_howto() || wheel_showcase(SHOWCASE_SECONDS)) break;
         if (!roms_count()) continue;
-        int first = demo_next(roms_count() - 1), i = demo_lock >= 0 ? demo_lock : first;
-        bool out = false;
-        do {
-            out = run_game(i, true) == GAME_DEMO_EXIT;
-            i = demo_next(i);
-            if (demo_lock >= 0) demo_set_lock(i);   /* PWR "next" while locked moves the lock along */
-        } while (!out && (demo_lock >= 0 || i != first));
-        if (out) break;
+        int i = demo_lock >= 0 ? demo_lock : (demo_at = demo_next(demo_at));
+        if (run_game(i, true) == GAME_DEMO_EXIT) break;
+        if (demo_lock >= 0) demo_set_lock(demo_next(i));   /* PWR "next" while locked moves the lock along */
     }
     display_set_backlight(BACKLIGHT_PLAY);
     ble_pad_scan_rate(true);

@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "ui.c" "saves.c" "medal.c" "music.c" "core.c" "splash.c" "festive.c"
+    SRCS "main.c" "ui.c" "saves.c" "medal.c" "music.c" "core.c" "festive.c"
          "roms.c" "input.c" "sfx.c" "attract.c" "wheel.c"
     INCLUDE_DIRS "."
     REQUIRES display audio_hal ble_pad nofrendo driver esp_timer nvs_flash esp_partition esp_adc

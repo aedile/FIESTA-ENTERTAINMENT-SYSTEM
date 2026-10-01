@@ -205,10 +205,10 @@ Title → wheel → game.
   Holding BOOT raises a tone and grows the cover until the game launches;
   A launches it at once. The last entry on the wheel is the credits.
 - **The show** starts when the wheel is untouched for 45 s, or a game for 3
-  minutes: title, how to play, the wheel turning by itself, the credits, the
-  fireworks over the Tower of the Americas, then each game's own attract mode
-  for 2 minutes. Any button returns to the wheel. Battery saves are neither
-  loaded nor written in the show.
+  minutes: title, how to play, the wheel turning through every game, then one
+  game's own attract mode for 2 minutes; then round again with the next game.
+  Any button returns to the wheel. Battery saves are neither loaded nor written
+  in the show.
 - **Lock** the show to one game with BOOT in that game; the choice survives a
   reboot, so a medal can be "the Contra one" all day.
 - Games whose title screens never demo are left out of the rotation by a default
