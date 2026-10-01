@@ -171,6 +171,12 @@ static void footer(int held_ms, bool pad)
 static void render(int held_ms, bool pad)
 {
     frame++;
+    if (frame & 1) {   /* present at 30: the odd ticks only carry the music and settle the turn */
+        music_tick_hook(NULL);
+        turn = turn * 5 / 8;
+        if (abs(turn) < 6) turn = 0;
+        return;
+    }
     int behind = sel;
     if (turn >= STEP / 2) behind = wrap(sel - 1);
     if (turn <= -STEP / 2) behind = wrap(sel + 1);
@@ -192,7 +198,7 @@ static void render(int held_ms, bool pad)
     if (turn == 0 && launch < 0 && !showcase) pointers();
     header();
     footer(held_ms, pad);
-    music_tick_hook((frame & 1) ? NULL : ui_line_push);
+    music_tick_hook(ui_line_push);
     turn = turn * 5 / 8;
     if (abs(turn) < 6) turn = 0;
 }
