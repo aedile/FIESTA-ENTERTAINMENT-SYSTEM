@@ -5,7 +5,8 @@
 
 #define BTN_BOOT_SHORT 0x01
 #define BTN_BOTH       0x02  /* both buttons pressed together (sound); neither counts on its own then */
-#define BTN_BOOT_HOLD10 0x04 /* BOOT held 10 s (forget controller) */
+#define BTN_BOOT_HOLD5  0x04 /* BOOT held 5 s (a game: back to the wheel) */
+#define BTN_BOOT_HOLD10 0x20 /* BOOT held 10 s (forget controller) */
 #define BTN_PWR_SHORT  0x08
 #define BTN_PWR_LONG   0x10  /* PWR held 2 s: medal_poll() powers off by itself */
 

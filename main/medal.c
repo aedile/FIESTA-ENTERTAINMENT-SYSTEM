@@ -38,15 +38,17 @@ void medal_init(void)
 }
 
 /* One event per press. PWR: SHORT on release under 2 s, LONG at 2 s. BOOT: SHORT on release
- * under 3 s (unless consumed), HOLD10 the moment 10 s is reached. Both down together: BOTH, once,
+ * under 3 s (unless consumed), HOLD5 and HOLD10 the moment 5 and 10 s are reached. Both down together: BOTH, once,
  * and neither button counts on its own until both are up again. */
 static int64_t down_since[2];
-static bool fired[2], armed[2], consumed[2], both_seen;
+static bool armed[2], consumed[2], both_seen;
+static int fired[2];   /* holds fired this press */
 
 uint32_t medal_poll(void)
 {
     static const gpio_num_t pin[2] = { PIN_BTN_BOOT, PIN_BTN_PWR };
-    static const int64_t hold_us[2] = { 10000000, 2000000 };
+    static const int64_t hold_us[2][2] = { { 5000000, 10000000 }, { 2000000, 2000000 } };
+    static const uint32_t hold_ev[2][2] = { { BTN_BOOT_HOLD5, BTN_BOOT_HOLD10 }, { BTN_PWR_LONG, 0 } };
     int64_t now = esp_timer_get_time();
     uint32_t ev = 0;
     bool d[2];
@@ -64,8 +66,8 @@ uint32_t medal_poll(void)
     if (!d[0] && !d[1]) both_seen = false;
     for (int i = 0; i < 2; i++) {
         bool down = d[i];
-        if (down && !down_since[i]) { down_since[i] = now; fired[i] = false; consumed[i] = false; }
-        if (down && !fired[i] && !consumed[i] && now - down_since[i] >= hold_us[i]) { fired[i] = true; ev |= i ? BTN_PWR_LONG : BTN_BOOT_HOLD10; }
+        if (down && !down_since[i]) { down_since[i] = now; fired[i] = 0; consumed[i] = false; }
+        if (down && fired[i] < 2 && !consumed[i] && now - down_since[i] >= hold_us[i][fired[i]]) ev |= hold_ev[i][fired[i]++];
         if (!down && down_since[i]) {
             int64_t held = now - down_since[i];
             if (!fired[i] && !consumed[i] && held > 30000 && held < 3000000) ev |= i ? BTN_PWR_SHORT : BTN_BOOT_SHORT;

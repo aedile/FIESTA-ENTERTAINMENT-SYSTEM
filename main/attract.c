@@ -80,9 +80,10 @@ static const struct { const char *what, *does; } rows[] = {
     { "IN A GAME",       NULL },
     { "Y OR SHOULDER",   "MENU" },
     { "MIDDLE BUTTON",   "LOCK DEMO" },
+    { "HOLD MIDDLE 5S",  "TO THE WHEEL" },
     { "",                NULL },
     { "ANYWHERE",        NULL },
-    { "BOTH BUTTONS",    "SOUND" },
+    { "BOTH BUTTONS",    "VOLUME" },
     { "HOLD TOP",        "POWER OFF" },
     { "PAD AGAINST IT",  "TO PAIR" },
 };

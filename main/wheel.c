@@ -133,13 +133,13 @@ static void pointers(void)
 static void header(void)
 {
     ui_fill(0, 0, ui_w, HEADER_H, UI_BLACK);
-    const char *name = muted ? "MUTED" : "F.E.S.";
+    const char *name = muted ? "MUTED" : quiet ? "QUIET" : "F.E.S.";
     int pct = medal_battery_percent();
     char charge[8]; snprintf(charge, sizeof charge, "%d", pct);
     const int bw = 26, bh = 11, gap = 12;
     int name_w = 8 * (int)strlen(name), charge_w = 8 * (int)strlen(charge);
     int x = (ui_w - (name_w + gap + charge_w + 5 + bw + 2)) / 2;
-    ui_text(x, 5, name, muted ? UI_RED : CUBE(3,3,4));
+    ui_text(x, 5, name, muted ? UI_RED : quiet ? UI_YELLOW : CUBE(3,3,4));
     x += name_w + gap;
     ui_text(x, 5, charge, UI_GREY);
     x += charge_w + 5;
@@ -223,7 +223,7 @@ wheel_result_t wheel_run(int *game)
             if (mev & BTN_PWR_SHORT) nav(+1);
             if (mev & BTN_BOOT_SHORT) nav(-1);
             if ((e & PAD_B) && !is_credits(sel)) { demo_set_skip(sel, !demo_skip[sel]); }
-            if (e & PAD_SELECT) { set_mute(!muted); toast_mute(); }
+            if (e & PAD_SELECT) { volume_cycle(); toast_volume(); }
             if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "games only; START to switch"); }
             if (e & PAD_MENU) { sfx_tone(0); ui_crt = false; return WHEEL_CONTROLLER; }
             if (serial_demo) { sfx_tone(0); ui_crt = false; return WHEEL_IDLE; }

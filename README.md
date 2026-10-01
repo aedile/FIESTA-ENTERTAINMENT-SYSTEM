@@ -181,8 +181,8 @@ Gamepad, Nintendo positions (on an Xbox pad, B is NES A and A is NES B):
 
 | Screen | Controls |
 |---|---|
-| Wheel | D-pad up/down, A play, B toggle the game in or out of the show's rotation, Select mute, Start portrait/landscape (games only), Y or a shoulder button for the controller screen |
-| Game | Y or a shoulder button opens the menu: Resume, Save state, Load state, Reset game, Mute, Back to the wheel, Controller |
+| Wheel | D-pad up/down, A play, B toggle the game in or out of the show's rotation, Select volume (full, quiet, muted), Start portrait/landscape (games only), Y or a shoulder button for the controller screen |
+| Game | Y or a shoulder button opens the menu: Resume, Save state, Load state, Reset game, Sound, Back to the wheel, Controller |
 | Controller screen | Back, Forget this controller |
 
 Medal buttons, no controller needed:
@@ -190,8 +190,8 @@ Medal buttons, no controller needed:
 | Button | Short press | Hold |
 |---|---|---|
 | PWR | step the wheel; next game (show); leave the game | 2 s: power off |
-| BOOT | step the wheel back; lock or unlock the show to the current game | on the wheel, 2 s: play the game; 10 s: forget the controller |
-| Both together | sound on / off | |
+| BOOT | step the wheel back; lock or unlock the show to the current game | on the wheel, 2 s: play the game; in a game, 5 s: back to the wheel; 10 s: forget the controller |
+| Both together | volume: full, quiet, muted | |
 
 ## The flow: title, wheel, show
 
@@ -214,7 +214,7 @@ Title → wheel → game.
 - Games whose title screens never demo are left out of the rotation by a default
   list at the top of `main/input.c`; B on the wheel overrides it per device.
 
-Kept in NVS: the paired controller, the lock, per-game exclusion, mute and
+Kept in NVS: the paired controller, the lock, per-game exclusion, volume and
 orientation. Battery RAM and save states live in their own NVS partition.
 
 ## Adding games, covers and music

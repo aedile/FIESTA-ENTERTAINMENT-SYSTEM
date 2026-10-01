@@ -14,7 +14,9 @@
 static const char *TAG = "INPUT";
 #define NVS_NS "nestor"
 
-bool muted, portrait = true;
+bool muted, quiet, portrait = true;
+#define DAC_FULL 0xBF   /* ES8311: 0 dB */
+#define DAC_QUIET 0x8F  /* -24 dB */
 int demo_lock = -1;
 bool demo_skip[64];
 bool serial_demo;
@@ -97,7 +99,7 @@ static void medal_global(void)
     battery_watch();
     uint32_t ev = medal_poll() | serial_medal;
     serial_medal = 0;
-    if (ev & BTN_BOTH) { set_mute(!muted); toast_mute(); }
+    if (ev & BTN_BOTH) { volume_cycle(); toast_volume(); }
     if (ev & BTN_BOOT_HOLD10) { pad_forget(); toast("Controller forgotten", "pad against the medal to pair"); }
     medal_pending |= ev & (BTN_BOOT_SHORT | BTN_PWR_SHORT);
 }
@@ -141,7 +143,7 @@ static void nvs_key_for(char out[16], char type, const char *rom)
 void settings_load(void)
 {
     nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) { audio_set_mute(false); return; }
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
     char lock[48] = {0}; size_t n = sizeof lock;
     if (nvs_get_str(h, "demo_lock", lock, &n) == ESP_OK)
         for (int i = 0; i < roms_count(); i++) if (strcmp(rom_get(i)->name, lock) == 0) demo_lock = i;
@@ -156,11 +158,12 @@ void settings_load(void)
         }
     }
     uint8_t m = 0;
-    muted = nvs_get_u8(h, "mute", &m) == ESP_OK && m;
+    if (nvs_get_u8(h, "vol", &m) == ESP_OK) { quiet = m == 1; muted = m == 2; }
     audio_set_mute(muted);
+    audio_set_volume(quiet ? DAC_QUIET : DAC_FULL);
     if (nvs_get_u8(h, "portrait", &m) == ESP_OK) portrait = m;
     nvs_close(h);
-    ESP_LOGI(TAG, "demo lock: %s, %s, %s", demo_lock >= 0 ? rom_get(demo_lock)->name : "none", muted ? "muted" : "sound on", portrait ? "portrait" : "landscape");
+    ESP_LOGI(TAG, "demo lock: %s, %s, %s", demo_lock >= 0 ? rom_get(demo_lock)->name : "none", volume_name(), portrait ? "portrait" : "landscape");
 }
 
 static void nvs_put_u8(const char *key, uint8_t v)
@@ -169,7 +172,18 @@ static void nvs_put_u8(const char *key, uint8_t v)
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) { nvs_set_u8(h, key, v); nvs_commit(h); nvs_close(h); }
 }
 
-void set_mute(bool m) { muted = m; audio_set_mute(m); nvs_put_u8("mute", m); ESP_LOGI(TAG, "%s", m ? "muted" : "sound on"); }
+const char *volume_name(void) { return muted ? "Muted" : quiet ? "Quiet" : "Full volume"; }
+
+void volume_cycle(void)
+{
+    int mode = (muted ? 2 : quiet ? 1 : 0) + 1;
+    if (mode > 2) mode = 0;
+    quiet = mode == 1; muted = mode == 2;
+    audio_set_mute(muted);
+    audio_set_volume(quiet ? DAC_QUIET : DAC_FULL);
+    nvs_put_u8("vol", mode);
+    ESP_LOGI(TAG, "%s", volume_name());
+}
 void set_portrait(bool p) { portrait = p; ui_set_portrait_games(p); nvs_put_u8("portrait", p); ESP_LOGI(TAG, "%s", p ? "portrait" : "landscape"); }
 
 void demo_set_lock(int idx)
@@ -209,7 +223,7 @@ void toast(const char *line1, const char *line2)
     for (int i = 0; i < 60; i++) music_tick();
 }
 
-void toast_mute(void) { toast(muted ? "Muted" : "Sound on", "both buttons, or SELECT"); }
+void toast_volume(void) { toast(volume_name(), "both buttons, or SELECT"); }
 
 void toggle_lock(int idx)
 {

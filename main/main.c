@@ -7,8 +7,9 @@
  * attract modes DEMO_SECONDS each. Any button brings the wheel back.
  *
  * The medal's two buttons work without a controller: PWR / BOOT step the wheel, BOOT held
- * picks, both together toggle the sound, PWR held 2 s powers off, BOOT held 10 s forgets the
- * controller. In a game BOOT locks the demo to that game and PWR leaves it.
+ * picks, both together cycle the volume (full, quiet, muted), PWR held 2 s powers off, BOOT held
+ * 10 s forgets the controller. In a game BOOT locks the demo to that game, BOOT held 5 s (or PWR)
+ * leaves it.
  * PRG/CHR ROM run straight out of memory-mapped flash; battery RAM and save states live in
  * the 'saves' NVS partition.
  */
@@ -120,7 +121,7 @@ static void controller_screen(void)
 enum { MENU_RESUME, MENU_SAVE, MENU_LOAD, MENU_RESET, MENU_MUTE, MENU_WHEEL, MENU_CONTROLLER, MENU_COUNT };
 static int game_menu(const char *rom)
 {
-    const char *items[MENU_COUNT] = { "Resume", "Save state", "Load state", "Reset game", muted ? "Unmute" : "Mute",
+    const char *items[MENU_COUNT] = { "Resume", "Save state", "Load state", "Reset game", muted ? "Sound: muted" : quiet ? "Sound: quiet" : "Sound: full",
                                       "Back to the wheel", "Controller" };
     bool have_state = saves_has_state(rom);
     int sel = 0;
@@ -264,6 +265,7 @@ static game_result_t run_game_inner(int idx, bool demo)
     for (;;) {
         int64_t f0 = esp_timer_get_time();
         uint32_t b = 0, mev = medal_events();
+        if (demo && (mev & BTN_BOOT_HOLD5)) return GAME_DEMO_EXIT;
         if (mev & BTN_BOOT_SHORT) { toggle_lock(idx); build_palette(4); underruns0 = audio_get_underrun_count(); }
         if (demo) {
             if (pad_edges()) { ESP_LOGI(TAG, "demo: button pressed, back to the wheel"); return GAME_DEMO_EXIT; }
@@ -273,7 +275,7 @@ static game_result_t run_game_inner(int idx, bool demo)
             b = pad_now();
             if (b != prev) last_input = f0;
             if (f0 - last_input > IDLE_AFTER_US) { sram_flush(nes, rom, true); return GAME_IDLE; }
-            if (mev & BTN_PWR_SHORT) { sram_flush(nes, rom, true); return GAME_WHEEL; }
+            if (mev & (BTN_PWR_SHORT | BTN_BOOT_HOLD5)) { sram_flush(nes, rom, true); return GAME_WHEEL; }
         }
         if (!demo && (b & PAD_MENU) && !(prev & PAD_MENU)) {
             sram_flush(nes, rom, true);
@@ -281,7 +283,7 @@ static game_result_t run_game_inner(int idx, bool demo)
             if (a == MENU_SAVE) saves_save_state(rom);
             if (a == MENU_LOAD) saves_load_state(rom);
             if (a == MENU_RESET) nes_reset(true);
-            if (a == MENU_MUTE) set_mute(!muted);
+            if (a == MENU_MUTE) volume_cycle();
             if (a == MENU_CONTROLLER) { controller_screen(); ui_layout(UI_LAYOUT_NES); build_palette(4); }   /* music_start is a no-op: core busy */
             if (a == MENU_WHEEL) return GAME_WHEEL;
             prev = pad_now();
