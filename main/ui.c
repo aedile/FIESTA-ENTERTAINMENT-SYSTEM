@@ -238,7 +238,7 @@ void ui_scanlines(void)
 
 /* the front-loading console seen from the front and a little above, after the photo: a pale lid
  * with a ribbed patch, the black stripe wrapping over the top and down the front at the right,
- * the door with its red logo, a darker lower band with the red LED, POWER and RESET, the ports in
+ * the door with FIESTA in red, a darker lower band with the red LED, POWER and RESET, the ports in
  * the stripe; a pad in front, cabled to port 1. (cx, base_y) is the middle of the floor line. */
 void ui_console(int frame, int cx, int base_y)
 {
@@ -259,7 +259,7 @@ void ui_console(int frame, int cx, int base_y)
     ui_fill(x, fy, W, UP, lid);
     ui_fill(x + 4, fy + 2, STRIPE - 8, 1, rib);                  /* the door's top edge */
     ui_fill(x + 4, fy + UP - 2, STRIPE - 8, 1, rib);
-    ui_text(x + 10, fy + 5, "Nintendo", red);
+    ui_text(x + 10, fy + 5, "FIESTA", red);
     /* front, lower band */
     int by = fy + UP;
     ui_fill(x, by, W, LOW, band);

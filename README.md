@@ -1,6 +1,6 @@
 # F.E.S. — Fiesta Entertainment System
 
-**A Nintendo Entertainment System inside a wearable Fiesta San Antonio 2027 medal. Twenty games at a locked 60 fps with sound, a Bluetooth gamepad, and a show of its own when nobody is playing. One $20 ESP32-C6 board: a single 160 MHz RISC-V core, 512 KB of RAM, no PSRAM, no SD card.**
+**An NES emulator inside a wearable Fiesta San Antonio 2027 medal. Twenty games at a locked 60 fps with sound, a Bluetooth gamepad, and a show of its own when nobody is playing. One $20 ESP32-C6 board: a single 160 MHz RISC-V core, 512 KB of RAM, no PSRAM, no SD card.**
 
 F.E.S. is a port of the [nofrendo](https://github.com/ducalex/retro-go) NES core to ESP-IDF on the [Waveshare ESP32-C6-LCD-1.69](https://www.waveshare.com/esp32-c6-lcd-1.69.htm). Games run straight out of flash. Pair a BLE controller and it is a console; leave it alone and it plays a cinematic splash, then cycles through every game's own attract mode with fireworks over the Tower of the Americas, papel picado and dancing mariachis in between.
 
