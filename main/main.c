@@ -48,7 +48,7 @@ static const char *TAG = "NESTOR";
 #define BACKLIGHT_PLAY  153          /* 60 %, as PELLETINO */
 #define BACKLIGHT_DEMO  76           /* 30 % */
 #define MUSIC_TRACK     7            /* DuckTales NSF (joshw rip of the release): 7 = The Moon */
-#define SHOWCASE_SECONDS 4
+#define SHOWCASE_SECONDS 2
 
 static void log_heap(const char *when)
 {

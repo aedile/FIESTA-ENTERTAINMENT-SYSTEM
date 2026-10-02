@@ -189,8 +189,8 @@ Medal buttons, no controller needed:
 
 | Button | Short press | Hold |
 |---|---|---|
-| PWR | step the wheel; next game (show); leave the game | 2 s: power off |
-| BOOT | step the wheel back; lock or unlock the show to the current game | on the wheel, 2 s: play the game; in a game, 5 s: back to the wheel; 10 s: forget the controller |
+| PWR (top) | the game above on the wheel; next game (show); leave the game | 2 s: power off |
+| BOOT (middle) | the game below on the wheel; lock or unlock the show to the current game | on the wheel, 2 s: play the game; in a game, 5 s: back to the wheel; 10 s: forget the controller |
 | Both together | volume: full, quiet, muted | |
 
 ## The flow: title, wheel, show

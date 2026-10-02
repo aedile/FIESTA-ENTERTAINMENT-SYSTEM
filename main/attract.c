@@ -62,7 +62,7 @@ bool attract_title(void)
             ui_text_scaled(CX - WORD_W / 2, 30, WORD, UI_WHITE, WORD_SCALE);
             ui_text_center(68, "FIESTA ENTERTAINMENT SYSTEM", CUBE(5,4,0));
             ui_text_center(84, "SAN ANTONIO 2027", CUBE(5,1,3));
-            ui_text_center(104, games, CUBE(0,4,5));
+            ui_text_center(104, games, CUBE(0,4,4));
             if (k > FLASH_FULL + FLASH_FADE && ((k / 24) & 1)) ui_text_center(250, "PRESS A BUTTON", UI_WHITE);
         }
         present(t);
@@ -73,7 +73,8 @@ bool attract_title(void)
 /* ---- how to play: three short tables that write themselves out a row at a time ---- */
 static const struct { const char *what, *does; } rows[] = {
     { "ON THE WHEEL",    NULL },
-    { "UP / DOWN",       "BROWSE" },
+    { "TOP BUTTON",      "GAME ABOVE" },
+    { "MIDDLE BUTTON",   "GAME BELOW" },
     { "A",               "PLAY" },
     { "HOLD MIDDLE",     "PLAY, NO PAD" },
     { "",                NULL },
@@ -107,13 +108,13 @@ bool attract_howto(void)
         if (shown > ROWS) shown = ROWS;
         for (int i = 0; i < shown; i++) {
             int y = TOP + i * ROW_H;
-            if (!rows[i].does) { ui_text_center(y, rows[i].what, CUBE(0,4,5)); continue; }
+            if (!rows[i].does) { ui_text_center(y, rows[i].what, CUBE(0,4,4)); continue; }
             bool fresh = i == shown - 1 && t < ROWS * ROW_EVERY;
             ui_text(GUTTER - 8 * (int)strlen(rows[i].what), y, rows[i].what, fresh ? UI_WHITE : CUBE(5,4,0));
-            ui_text(GUTTER + 8, y, rows[i].does, fresh ? UI_WHITE : CUBE(4,4,5));
+            ui_text(GUTTER + 8, y, rows[i].does, fresh ? UI_WHITE : CUBE(4,4,4));
         }
         if (t % ROW_EVERY == 0 && t / ROW_EVERY < ROWS && rows[t / ROW_EVERY].does) sfx_play(SFX_CLICK);
-        if ((t / 24) & 1) ui_text_center(244, "PRESS A BUTTON", UI_WHITE);
+        if ((t / 24) & 1) ui_text_center(260, "PRESS A BUTTON", UI_WHITE);
         present(t);
     }
     return false;

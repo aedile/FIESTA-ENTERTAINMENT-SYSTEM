@@ -36,6 +36,9 @@ static const struct { int16_t cy, dx, bw, bh; } PLACE[5] = {
 
 static int n_entries, sel, turn, frame, launch = -1;
 static bool showcase;
+#define CACHE_BYTES (240 * 280)
+static uint8_t *cache;   /* the resting scene without the middle cover, while the wheel is up */
+static int cache_sel = -1;
 
 void wheel_init(int games) { n_entries = games + 1; if (sel >= n_entries) sel = 0; turn = 0; launch = -1; }
 void wheel_select(int game) { if (game >= 0 && game < n_entries) { sel = game; turn = 0; } }
@@ -97,11 +100,12 @@ static void draw_entry(int index, int at, int grow)
     ui_bitmap_shaded(cx - w / 2, cy - h / 2, art, aw, ah, h, ah, shade);
 }
 
-static void wheel_draw(int spread, int grow)
+static void wheel_draw(int spread, int grow, bool middle)
 {
     int lo = -4, hi = 4;
     while (lo <= hi) {
         int k = abs(lo) >= abs(hi) ? lo++ : hi--;
+        if (k == 0 && !middle) continue;
         int at = MIDDLE + k * STEP + turn + (k > 0 ? spread : k < 0 ? -spread : 0);
         draw_entry(wrap(sel + k), at, k == 0 ? grow : 0);
     }
@@ -180,7 +184,6 @@ static void render(int held_ms, bool pad)
     int behind = sel;
     if (turn >= STEP / 2) behind = wrap(sel - 1);
     if (turn <= -STEP / 2) behind = wrap(sel + 1);
-    backdrop(behind);
     int spread = 0, grow = 0;
     if (launch >= 0) {
         int t = launch < LAUNCH_TICKS ? launch : LAUNCH_TICKS;
@@ -193,7 +196,18 @@ static void render(int held_ms, bool pad)
         if (held_ms > HOLD_MS) held_ms = HOLD_MS;
         grow = held_ms * 9 / HOLD_MS + ((frame & 2) ? 1 : 0);
     }
-    wheel_draw(spread, grow);
+    /* at rest the backdrop and the neighbours come from the cache (decoding the screenshot and
+     * reading five covers out of flash every frame overran the music); only the middle is drawn */
+    bool rest = turn == 0 && launch < 0;
+    if (rest && cache) {
+        if (cache_sel != sel) { backdrop(sel); wheel_draw(0, 0, false); memcpy(cache, ui_fb, CACHE_BYTES); cache_sel = sel; }
+        else memcpy(ui_fb, cache, CACHE_BYTES);
+        draw_entry(sel, MIDDLE, grow);
+    } else {
+        cache_sel = -1;
+        backdrop(behind);
+        wheel_draw(spread, grow, true);
+    }
     if (launch < 0) pips();
     if (turn == 0 && launch < 0 && !showcase) pointers();
     header();
@@ -205,7 +219,7 @@ static void render(int held_ms, bool pad)
 
 static void begin_launch(void) { launch = 0; turn = 0; sfx_tone(0); sfx_play(SFX_COIN); }
 
-wheel_result_t wheel_run(int *game)
+static wheel_result_t run(int *game)
 {
     showcase = false; launch = -1; ui_white = 0;
     ui_crt = true;
@@ -220,8 +234,8 @@ wheel_result_t wheel_run(int *game)
         if (launch < 0) {
             if (e & (PAD_UP | PAD_LEFT)) nav(-1);
             if (e & (PAD_DOWN | PAD_RIGHT)) nav(+1);
-            if (mev & BTN_PWR_SHORT) nav(+1);
-            if (mev & BTN_BOOT_SHORT) nav(-1);
+            if (mev & BTN_PWR_SHORT) nav(-1);    /* top button: the game above */
+            if (mev & BTN_BOOT_SHORT) nav(+1);   /* middle button: the game below */
             if ((e & PAD_B) && !is_credits(sel)) { demo_set_skip(sel, !demo_skip[sel]); }
             if (e & PAD_SELECT) { volume_cycle(); toast_volume(); }
             if (e & PAD_START) { set_portrait(!portrait); toast(portrait ? "Portrait" : "Landscape", "games only; START to switch"); }
@@ -241,7 +255,7 @@ wheel_result_t wheel_run(int *game)
     }
 }
 
-bool wheel_showcase(int seconds_per_game)
+static bool run_showcase(int seconds_per_game)
 {
     showcase = true; launch = -1; ui_white = 0; ui_crt = true;
     int step = seconds_per_game * 60;
@@ -255,4 +269,20 @@ bool wheel_showcase(int seconds_per_game)
     }
     ui_crt = false; showcase = false;
     return false;
+}
+
+wheel_result_t wheel_run(int *game)
+{
+    cache = malloc(CACHE_BYTES); cache_sel = -1;
+    wheel_result_t r = run(game);
+    free(cache); cache = NULL;
+    return r;
+}
+
+bool wheel_showcase(int seconds_per_game)
+{
+    cache = malloc(CACHE_BYTES); cache_sel = -1;
+    bool r = run_showcase(seconds_per_game);
+    free(cache); cache = NULL;
+    return r;
 }

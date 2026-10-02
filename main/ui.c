@@ -102,12 +102,19 @@ void ui_text(int x, int y, const char *s, uint8_t colour) { ui_text_scaled(x, y,
 void ui_text_center(int y, const char *s, uint8_t colour) { ui_text_scaled((ui_w - 8 * (int)strlen(s)) / 2, y, s, colour, 1); }
 void ui_text_centred_scaled(int cx, int y, const char *s, uint8_t colour, int scale) { ui_text_scaled(cx - 4 * scale * (int)strlen(s), y, s, colour, scale); }
 
+static uint8_t shade_lut[4][256];
 static uint8_t shade_cube(uint8_t v, int shade)
 {
-    if (v >= 180 || !shade) return v;
-    int r = v / 30, g = (v / 5) % 6, b = v % 5;
-    r = r * (4 - shade) / 4; g = g * (4 - shade) / 4; b = b * (4 - shade) / 4;
-    return CUBE(r, g, b);
+    static bool built;
+    if (!built) {
+        built = true;
+        for (int sh = 0; sh < 4; sh++)
+            for (int i = 0; i < 256; i++) {
+                int r = i / 30, g = (i / 5) % 6, b = i % 5;
+                shade_lut[sh][i] = (i >= 180 || !sh) ? i : CUBE(r * (4 - sh) / 4, g * (4 - sh) / 4, b * (4 - sh) / 4);
+            }
+    }
+    return shade_lut[shade][v];
 }
 
 void ui_bitmap_shaded(int x, int y, const uint8_t *px, int w, int h, int num, int den, int shade)
@@ -203,7 +210,7 @@ void ui_grid(int frame, int horizon)
 {
     if (horizon < 1 || horizon >= ui_h) return;
     int below = ui_h - horizon;
-    uint8_t near = CUBE(4,0,5), far = CUBE(1,0,2);
+    uint8_t near = CUBE(4,0,4), far = CUBE(1,0,2);   /* blue runs 0..4 */
     for (int k = 1; k <= 18; k++) {
         int z16 = k * 16 + (frame % 16);
         int y = horizon + (below * 16) / z16;
@@ -229,27 +236,61 @@ void ui_scanlines(void)
     }
 }
 
-/* a grey console with a dark front-loading door, a red power light and a cartridge standing in it;
- * no Nintendo marking, just the shape everyone knows */
+/* the front-loading console seen from the front and a little above, after the photo: a pale lid
+ * with a ribbed patch, the black stripe wrapping over the top and down the front at the right,
+ * the door with its red logo, a darker lower band with the red LED, POWER and RESET, the ports in
+ * the stripe; a pad in front, cabled to port 1. (cx, base_y) is the middle of the floor line. */
 void ui_console(int frame, int cx, int base_y)
 {
-    uint8_t body = CUBE(4,4,4), body_lt = CUBE(5,5,5), body_dk = CUBE(2,2,2), door = CUBE(1,1,1), cart = CUBE(3,3,3);
-    int w = 120, h = 34, x = cx - w / 2, y = base_y - h;
-    ui_fill(x, y, w, h, body);
-    ui_fill(x, y, w, 3, body_lt);
-    ui_fill(x, y + h - 4, w, 4, body_dk);
-    ui_fill(x + 6, y + 8, w - 12, 14, door);            /* the flap */
-    ui_fill(x + 6, y + 8, w - 12, 1, body_dk);
-    ui_fill(x + w / 2 - 22, y + 3, 44, 4, cart);         /* cartridge spine showing above the door */
-    ui_fill(x + w / 2 - 22, y + 2, 44, 1, body_lt);
-    ui_fill(x + 10, y + 26, 10, 4, body_dk);             /* power */
-    ui_fill(x + 24, y + 26, 10, 4, body_dk);             /* reset */
-    ui_fill(x + 12, y + 24, 3, 2, (frame >> 4) & 1 ? CUBE(5,0,0) : CUBE(3,0,0));   /* the red LED */
-    for (int i = 0; i < 18; i++) ui_fill(x + 44 + i * 4, y + 26, 2, 4, body_dk);   /* vents */
-    /* two controller leads into the front */
-    ui_fill(x + w - 30, y + 26, 6, 4, door); ui_fill(x + w - 18, y + 26, 6, 4, door);
-    ui_fill(x + w - 28, y + 30, 2, 14 + ((frame >> 3) & 1), door);
-    ui_fill(x + w - 16, y + 30, 2, 12, door);
+    const uint8_t lid = CUBE(4,4,3), lid_lt = CUBE(5,5,4), rib = CUBE(3,3,2), band = CUBE(3,3,2),
+                  band_dk = CUBE(2,2,2), black = CUBE(1,1,1), ink = CUBE(0,0,1), red = CUBE(4,0,0);
+    const int W = 140, TOP = 16, UP = 17, LOW = 15, STRIPE = 104, STRIPE_W = 18;
+    int x = cx - 95 + 50, y = base_y - LOW - UP - TOP;
+    /* lid: rows narrow toward the back */
+    for (int r = 0; r < TOP; r++) {
+        int in = (TOP - r) / 2, l = x + in, w = W - 2 * in;
+        ui_fill(l, y + r, w, 1, r == TOP - 1 ? lid_lt : lid);
+        int s0 = l + STRIPE * w / W, s1 = l + (STRIPE + STRIPE_W) * w / W;
+        if (r & 1) ui_fill(l + 70 * w / W, y + r, s0 - (l + 70 * w / W), 1, rib);   /* the ribbed patch */
+        ui_fill(s0, y + r, s1 - s0, 1, r < 3 ? CUBE(2,2,2) : black);
+    }
+    /* front, upper: the door and the logo */
+    int fy = y + TOP;
+    ui_fill(x, fy, W, UP, lid);
+    ui_fill(x + 4, fy + 2, STRIPE - 8, 1, rib);                  /* the door's top edge */
+    ui_fill(x + 4, fy + UP - 2, STRIPE - 8, 1, rib);
+    ui_text(x + 10, fy + 5, "Nintendo", red);
+    /* front, lower band */
+    int by = fy + UP;
+    ui_fill(x, by, W, LOW, band);
+    ui_fill(x, by, W, 1, band_dk);
+    ui_fill(x + 6, by + 6, 2, 2, (frame >> 4) & 1 ? CUBE(5,0,0) : CUBE(2,0,0));   /* the LED */
+    for (int i = 0; i < 2; i++) {                                                  /* POWER, RESET */
+        int bx = x + 12 + i * 22;
+        ui_fill(bx, by + 3, 18, 8, band_dk);
+        ui_fill(bx + 1, by + 4, 16, 6, lid);
+        ui_fill(bx + 3, by + 7, 12, 1, red);
+    }
+    ui_fill(x, base_y - 1, W, 1, band_dk);
+    /* the stripe down the front, the ports in it */
+    ui_fill(x + STRIPE, fy, STRIPE_W, UP + LOW, black);
+    ui_fill(x + STRIPE + 2, fy + 6, STRIPE_W - 4, 1, CUBE(2,2,2));
+    for (int i = 0; i < 2; i++) {
+        int px = x + STRIPE + 3 + i * 7;
+        ui_fill(px, by + 3, 5, 9, band_dk);
+        ui_fill(px + 1, by + 4, 3, 7, ink);
+    }
+    /* the pad, in front and to the left, and its cable to port 1 */
+    int pw = 46, ph = 20, px = cx - 95, py = base_y + 8 - ph;
+    int port_x = x + STRIPE + 5, port_y = by + 12;
+    ui_fill(px + pw, base_y + 3, port_x - (px + pw) + 1, 1, band_dk);   /* cable: along the floor, up into the port */
+    ui_fill(port_x, port_y, 1, base_y + 3 - port_y, band_dk);
+    ui_fill(px, py, pw, ph, lid);
+    ui_fill(px + 2, py + 3, pw - 4, ph - 5, black);
+    ui_fill(px + 6, py + 9, 9, 3, rib);  ui_fill(px + 9, py + 6, 3, 9, rib);      /* d-pad */
+    ui_fill(px + 19, py + 9, 4, 2, rib); ui_fill(px + 25, py + 9, 4, 2, rib);     /* select, start */
+    ui_fill(px + 32, py + 8, 4, 4, red); ui_fill(px + 38, py + 8, 4, 4, red);     /* B, A */
+    ui_fill(px + 32, py + 5, 10, 1, red);                                         /* the logo line */
 }
 
 /* snap blob: 56 x (r,g,b) | u32 row_off[280] | RLE rows (see artconv.rle_rows) */
