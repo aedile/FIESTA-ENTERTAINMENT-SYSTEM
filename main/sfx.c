@@ -1,5 +1,5 @@
 /*
- * sfx.c - sound effects made rather than recorded. From FIESTACADE (0BSD).
+ * sfx.c - sound effects made rather than recorded. From PELLETINO (0BSD).
  *
  * An effect is a handful of ringing partials, each a two-pole resonator with its own decay,
  * under a burst of noise: a drawn blade (many high partials, close pairs beating, long decays)

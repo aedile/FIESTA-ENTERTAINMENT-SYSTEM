@@ -1,5 +1,5 @@
 /*
- * attract.c - the attract sequence, after FIESTACADE's.
+ * attract.c - the attract sequence, after PELLETINO's.
  *
  * Title: the wordmark crosses a starfield and leaves; the screen flashes white with the
  * sound of a blade being drawn; the title screen is there as the flash clears, a perspective
@@ -19,7 +19,7 @@
 #define WORD "F.E.S."
 #define WORD_SCALE 4
 #define WORD_W (6 * 8 * WORD_SCALE)
-#define FLY_STEP 3                 /* px per 60 Hz tick: the speed FIESTACADE's 6 px at 30 fps had */
+#define FLY_STEP 3                 /* px per 60 Hz tick: the speed PELLETINO's 6 px at 30 fps had */
 #define P1_END ((ui_w + 40 + WORD_W) / FLY_STEP + 12)
 #define FLASH_FULL 6
 #define FLASH_FADE 28
@@ -130,7 +130,7 @@ static const char *const after_games[] = {
     "", "~Every game belongs to its", "~maker. No ROMs ship with", "~this project.", "", "",
     "#EMULATION", "", "nofrendo", "~Matthew Conte", "", "retro-go fork", "~ducalex", "", "",
     "#SOFTWARE", "", "ESP-IDF, NimBLE", "~Espressif", "", "Font", "~font8x8 - Daniel Hepper", "",
-    "Menus and effects", "~after FIESTACADE", "", "",
+    "Menus and effects", "~after PELLETINO", "", "",
     "#MUSIC", "", "DuckTales - The Moon", "~Hiroshige Tonomura", "~Capcom 1989", "", "",
     "#ART", "", "Box art, screenshots", "~libretro-thumbnails", "", "",
     "#THANK YOU", "for playing", "", "~github.com/aedile",

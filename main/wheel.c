@@ -1,5 +1,5 @@
 /*
- * wheel.c - the game wheel, after FIESTACADE's menu.
+ * wheel.c - the game wheel, after PELLETINO's menu.
  *
  * Five places on a curve down the right of the panel: the chosen game's cover large in the
  * middle, its neighbours smaller and dimmer above and below, the pair beyond smaller still and

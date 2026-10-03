@@ -1,5 +1,5 @@
 /* wheel.h - the game wheel: the chosen game's cover large in the middle over its dimmed
- * screenshot, neighbours smaller above and below. Ported from FIESTACADE's menu. */
+ * screenshot, neighbours smaller above and below. Ported from PELLETINO's menu. */
 #pragma once
 #include <stdbool.h>
 typedef enum { WHEEL_PLAY, WHEEL_CREDITS, WHEEL_IDLE, WHEEL_CONTROLLER } wheel_result_t;

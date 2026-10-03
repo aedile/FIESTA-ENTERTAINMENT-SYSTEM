@@ -1,4 +1,4 @@
-/* sfx.h - the menus' sound effects, synthesized (ported from FIESTACADE's chiptune/sfx.c). */
+/* sfx.h - the menus' sound effects, synthesized (ported from PELLETINO's chiptune/sfx.c). */
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>

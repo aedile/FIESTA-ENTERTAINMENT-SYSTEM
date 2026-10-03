@@ -26,9 +26,8 @@ F.E.S. is a port of the [nofrendo](https://github.com/ducalex/retro-go) NES core
 
 Every number in this README was measured on the device over serial.
 
-From the same board as [PELLETINO](https://github.com/aedile/PELLETINO) (tilt
-Pac-Man), [FIESTACADE](https://github.com/aedile/FIESTACADE) (twenty-six arcade
-games) and [DIABLITO](https://github.com/aedile/DIABLITO) (shareware Doom).
+From the same board as [PELLETINO](https://github.com/aedile/PELLETINO) (an arcade
+in your pocket) and [DIABLITO](https://github.com/aedile/DIABLITO) (shareware Doom).
 *Codename NESTOR: the CMake project and some log tags keep that name.*
 
 ---
@@ -271,8 +270,8 @@ partitions.csv   nvs, phy, app 1.3 MB, roms 6 MB, saves (NVS) 512 KB, on a 16 MB
 - **libretro-thumbnails** for box art and the **joshw NSF archive** for the music
   rip, both fetched at build time for your own build and not redistributed here.
 - **nevsie** for the hands-on BLE gamepad list in Bluepad32 #154.
-- [PELLETINO](https://github.com/aedile/PELLETINO), for the display and audio drivers.
-- Built with Claude Code.
+- [PELLETINO](https://github.com/aedile/PELLETINO), for the display and audio drivers, the
+  menu design and the sound effects.
 
 Code written for this project is MIT (`LICENSE`). The NES core is GPL-2.0 and the
 vendored HID host is Apache-2.0, each with its modifications listed in
