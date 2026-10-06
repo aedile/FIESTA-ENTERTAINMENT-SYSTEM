@@ -2,7 +2,7 @@
 
 **An NES emulator inside a wearable Fiesta San Antonio 2027 medal. Twenty games at a locked 60 fps with sound, a Bluetooth gamepad, and a show of its own when nobody is playing. One $20 ESP32-C6 board: a single 160 MHz RISC-V core, 512 KB of RAM, no PSRAM, no SD card.**
 
-F.E.S. is a port of the [nofrendo](https://github.com/ducalex/retro-go) NES core to ESP-IDF on the [Waveshare ESP32-C6-LCD-1.69](https://www.waveshare.com/esp32-c6-lcd-1.69.htm). Games run straight out of flash. Pair a BLE controller and it is a console; leave it alone and it plays a cinematic splash, then cycles through every game's own attract mode with fireworks over the Tower of the Americas, papel picado and dancing mariachis in between.
+F.E.S. is a port of the [nofrendo](https://github.com/ducalex/retro-go) NES core to ESP-IDF on the [Waveshare ESP32-C6-LCD-1.69](https://www.waveshare.com/esp32-c6-lcd-1.69.htm). Games run straight out of flash. Pair a BLE controller, or use the medal's two buttons, and spin a game wheel of box art over each game's screenshot. Leave it alone and it puts on a show: the title, how to play, the wheel turning by itself, then one game's own attract mode, a different game each round.
 
 > **Licensing in one line:** the code written here is MIT, the NES core is
 > GPL-2.0, so a firmware image you hand to someone is GPL-2.0 as a whole (the
@@ -39,7 +39,7 @@ in your pocket) and [DIABLITO](https://github.com/aedile/DIABLITO) (shareware Do
 - [Getting it running](#getting-it-running)
 - [Which controllers work](#which-controllers-work)
 - [Controls](#controls)
-- [The flow: splash, picker, demo mode](#the-flow-splash-picker-demo-mode)
+- [The flow: title, wheel, show](#the-flow-title-wheel-show)
 - [Adding games, covers and music](#adding-games-covers-and-music)
 - [Repository layout](#repository-layout)
 - [Status and known gaps](#status-and-known-gaps)
@@ -81,10 +81,10 @@ The C6 has none of that.
 - **Hot paths in IRAM.** The 6502 core, `ppu_renderline` and `apu_process` run from
   RAM rather than the flash cache, for 6 KB of heap.
 - **Menus reuse the core.** The menu music is the DuckTales Moon theme as an NSF,
-  played through the same emulated APU with the PPU idle. The splash and menus
+  played through the same emulated APU with the PPU idle. The title, wheel and menus
   push their frames in strips under the music at 30 fps using the same callback.
-- **The radio sleeps when nobody is there.** On the pairing screen the scanner
-  listens 60% of the time; in demo mode, 3%.
+- **The radio sleeps when nobody is there.** On the wheel and the controller screen
+  the scanner listens 60% of the time; during the show, 3%.
 
 In a game the firmware logs fps, skipped frames, audio underruns and free heap
 every five seconds, with the per-subsystem breakdown.
@@ -154,7 +154,7 @@ Left alone, the medal starts its show.
 - **Watching it work.** `tools/drive.py 20` resets the board and prints 20 seconds
   of serial log. Keys typed into it act as a pad (w/a/s/d, `j` A, `k` B, `q` Start,
   `e` Select, `m` Menu; `n` and `l` stand in for the PWR and BOOT buttons, `x`
-  jumps to demo mode), so the whole UI can be driven without a controller.
+  jumps to the show), so the whole UI can be driven without a controller.
 
 ## Which controllers work
 
@@ -170,8 +170,8 @@ hear at all, in any mode, whatever the pad's mode switch says.
 
 Before buying a pad for this, scan it with a BLE scanner app such as nRF Connect
 while it is in pairing mode. If it does not show up there, it will not show up
-here. The firmware will connect to any named device held against the medal on the
-pairing screen and reject it cleanly if it has no HID service, so a wrong pad
+here. The firmware will connect to any named device held against the medal while no
+controller is connected, and reject it cleanly if it has no HID service, so a wrong pad
 fails fast instead of half working.
 
 ## Controls
